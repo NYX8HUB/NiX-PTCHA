@@ -1,0 +1,120 @@
+(function() {
+    // 1. Injetar o CSS (para não precisar de um arquivo .css separado)
+    const css = `
+        .recaptcha-box {
+            background: #f9f9f9;
+            border: 1px solid #d3d3d3;
+            border-radius: 3px;
+            width: 304px;
+            height: 78px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 12px;
+            box-shadow: 0 0 4px 1px rgba(0,0,0,0.08);
+            font-family: Roboto, helvetica, arial, sans-serif;
+            user-select: none;
+        }
+        .recaptcha-checkbox {
+            width: 28px;
+            height: 28px;
+            border: 2px solid #c1c1c1;
+            border-radius: 2px;
+            background: #fff;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        .recaptcha-checkbox:hover { border-color: #b2b2b2; }
+        .recaptcha-text { font-size: 14px; color: #000; font-weight: 400; margin-left: 12px; }
+        .recaptcha-logo { display: flex; flex-direction: column; align-items: center; margin-left: auto; }
+        .recaptcha-logo img { opacity: 0.6; }
+        .recaptcha-logo small { font-size: 10px; color: #555; text-decoration: none; margin-top: 2px;}
+        
+        /* Animação de Carregamento (Spinner) */
+        .recaptcha-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            animation: spin 1s linear infinite;
+            display: none;
+        }
+        
+        /* Checkmark Verde */
+        .recaptcha-checkmark {
+            width: 10px;
+            height: 16px;
+            border: solid #009688;
+            border-width: 0 3px 3px 0;
+            transform: rotate(45deg);
+            display: none;
+            margin-bottom: 4px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    `;
+    const style = document.createElement('style');
+    style.innerHTML = css;
+    document.head.appendChild(style);
+
+    // 2. Função para Renderizar o Widget
+    function renderCaptcha() {
+        // Procura todas as divs com a classe padrão ou personalizada
+        const elements = document.querySelectorAll('.g-recaptcha');
+
+        elements.forEach(el => {
+            if (el.innerHTML.trim() !== "") return; // Já renderizado
+
+            // Cria o HTML interno
+            el.innerHTML = `
+                <div class="recaptcha-box">
+                    <div style="display:flex; align-items:center;">
+                        <div class="recaptcha-checkbox">
+                            <div class="recaptcha-spinner"></div>
+                            <div class="recaptcha-checkmark"></div>
+                        </div>
+                        <span class="recaptcha-text">Não sou um robô</span>
+                    </div>
+                    <div class="recaptcha-logo">
+                        <img src="https://www.gstatic.com/recaptcha/api2/logo_48.png" width="32" height="32">
+                        <small>reCAPTCHA</small>
+                        <small style="font-size:8px;">Privacy - Terms</small>
+                    </div>
+                </div>
+                <input type="hidden" name="g-recaptcha-response" value="">
+            `;
+
+            // Adiciona evento de clique
+            const checkbox = el.querySelector('.recaptcha-checkbox');
+            const spinner = el.querySelector('.recaptcha-spinner');
+            const checkmark = el.querySelector('.recaptcha-checkmark');
+            const input = el.querySelector('input[name="g-recaptcha-response"]');
+            let clicked = false;
+
+            checkbox.addEventListener('click', () => {
+                if (clicked) return; // Evita duplo clique
+                clicked = true;
+
+                // Simula processamento
+                spinner.style.display = 'block';
+                
+                setTimeout(() => {
+                    spinner.style.display = 'none';
+                    checkmark.style.display = 'block';
+                    checkbox.style.borderColor = 'transparent'; // Remove borda ao verificar
+                    
+                    // Preenche o input oculto (simulando token gerado)
+                    input.value = "TOKEN_SUCESSO_FRONTEND";
+                    
+                    console.log("Captcha verificado!"); 
+                }, 1500); // Demora 1.5s para "verificar"
+            });
+        });
+    }
+
+    // Aguarda o DOM carregar
+    document.addEventListener("DOMContentLoaded", renderCaptcha);
+})();
