@@ -9,86 +9,83 @@ import random
 import json
 import base64
 import os
+import math # <--- Importante para a distorção (Seno/Cosseno)
 
 app = Flask(__name__)
 CORS(app)
 
 SECRET_KEY = b"SuaChaveSuperSecreta_MudeIsso123"
 
-# --- FRONTEND (JS + CSS BONITO) ---
+# --- FRONTEND (CSS Ajustado para a imagem maior) ---
 JS_TEMPLATE = """
 (function() {
     const API_BASE = "__API_URL__";
 
     const style = document.createElement('style');
     style.innerHTML = `
-        /* Estilo do Widget (Botão inicial) */
         .my-captcha { 
-            background: #fff; border: 1px solid #d1d5db; border-radius: 6px; 
-            width: 300px; padding: 12px; display: flex; align-items: center; 
+            background: #fff; border: 1px solid #d1d5db; border-radius: 8px; 
+            width: 320px; padding: 12px; display: flex; align-items: center; 
             font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
             user-select: none; position: relative;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-            transition: border-color 0.2s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         }
-        .my-captcha:hover { border-color: #9ca3af; }
+        .my-captcha:hover { border-color: #6b7280; }
         
         .my-captcha-check {
-            width: 26px; height: 26px; border: 2px solid #c1c1c1; border-radius: 4px;
-            cursor: pointer; background: #fff; margin-right: 14px; transition: all 0.2s;
-            position: relative;
+            width: 28px; height: 28px; border: 2px solid #c1c1c1; border-radius: 5px;
+            cursor: pointer; background: #fff; margin-right: 15px; flex-shrink: 0;
+            transition: all 0.2s;
         }
-        .my-captcha-check:hover { border-color: #a1a1a1; }
         .my-captcha-check.checked { 
             background: #10b981; border-color: #10b981;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white' width='20px' height='20px'%3E%3Cpath d='M0 0h24v24H0z' fill='none'/%3E%3Cpath d='M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z'/%3E%3C/svg%3E");
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white' width='22px' height='22px'%3E%3Cpath d='M0 0h24v24H0z' fill='none'/%3E%3Cpath d='M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z'/%3E%3C/svg%3E");
             background-position: center; background-repeat: no-repeat;
         }
         
-        /* Estilo do Modal (Janela do Desafio) */
         .captcha-modal {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -15px);
-            background: white; width: 320px;
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -20px);
+            background: white; width: 350px; /* Modal mais largo */
             border-radius: 12px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.05);
             z-index: 10000; display: none; overflow: hidden;
             font-family: 'Segoe UI', Roboto, sans-serif;
         }
         
         .modal-header {
-            background: #2563eb; color: white; padding: 12px 15px;
-            font-size: 14px; font-weight: 600; text-align: center;
+            background: #4f46e5; color: white; padding: 14px;
+            font-size: 15px; font-weight: 600; text-align: center;
         }
         
         .modal-body { padding: 20px; text-align: center; }
         
         .captcha-img {
             display: block; margin: 0 auto 15px auto; 
-            border-radius: 6px; border: 1px solid #e5e7eb;
-            width: 100%; max-width: 280px; height: auto;
+            border-radius: 8px; border: 1px solid #e5e7eb;
+            width: 100%; height: auto; /* Ajusta altura auto */
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.05);
         }
         
         .captcha-input { 
-            width: 100%; padding: 10px; margin-bottom: 12px; 
+            width: 100%; padding: 12px; margin-bottom: 15px; 
             box-sizing: border-box; border: 1px solid #d1d5db; 
-            border-radius: 6px; font-size: 16px; outline: none;
-            text-align: center; letter-spacing: 2px;
-            transition: border 0.2s;
+            border-radius: 8px; font-size: 18px; outline: none;
+            text-align: center; letter-spacing: 3px; font-weight: bold;
+            text-transform: uppercase;
         }
-        .captcha-input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+        .captcha-input:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.2); }
         
         .captcha-btn { 
-            background: #2563eb; color: white; border: none; padding: 10px 0; 
-            cursor: pointer; border-radius: 6px; font-weight: 600; width: 100%;
-            font-size: 14px; transition: background 0.2s;
+            background: #4f46e5; color: white; border: none; padding: 12px 0; 
+            cursor: pointer; border-radius: 8px; font-weight: 700; width: 100%;
+            font-size: 15px; transition: background 0.2s;
         }
-        .captcha-btn:hover { background: #1d4ed8; }
+        .captcha-btn:hover { background: #4338ca; }
         
-        #c-msg { font-size: 13px; margin-top: 10px; display: block; min-height: 18px; color: #dc2626;}
-        
-        /* Loading Spinner */
-        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #2563eb; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; margin: 0 auto; display: none;}
+        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #4f46e5; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; margin: 0 auto; display: none;}
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        #c-msg { font-size: 13px; margin-top: 10px; display: block; min-height: 18px; color: #dc2626; font-weight: 500;}
     `;
     document.head.appendChild(style);
 
@@ -108,19 +105,18 @@ JS_TEMPLATE = """
                 <div class="my-captcha">
                     <div class="my-captcha-check" id="c-box"></div>
                     <div style="display:flex; flex-direction:column;">
-                        <span style="font-size: 14px; font-weight: 500; color: #374151;">Não sou um robô</span>
-                        <span style="font-size: 10px; color: #9ca3af;">Secure Verification</span>
+                        <span style="font-size: 15px; font-weight: 600; color: #1f2937;">Não sou um robô</span>
+                        <span style="font-size: 11px; color: #6b7280;">Protected by AuthShield</span>
                     </div>
                     
                     <div class="captcha-modal" id="c-modal">
                         <div class="modal-header">Verificação de Segurança</div>
                         <div class="modal-body">
-                            <p id="c-instrucao" style="font-size:13px; margin:0 0 10px 0; color:#4b5563;">Resolva o desafio abaixo:</p>
-                            
                             <div class="loader" id="c-loader"></div>
                             <img id="c-img" class="captcha-img" alt="" style="display:none;" />
+                            <p id="c-instrucao" style="font-size:13px; margin:0 0 10px 0; color:#4b5563;">...</p>
                             
-                            <input type="text" id="c-input" class="captcha-input" placeholder="Resposta" autocomplete="off">
+                            <input type="text" id="c-input" class="captcha-input" placeholder="DIGITE AQUI" autocomplete="off">
                             <button id="c-btn" class="captcha-btn">VERIFICAR</button>
                             <span id="c-msg"></span>
                         </div>
@@ -156,21 +152,18 @@ JS_TEMPLATE = """
                     imgEl.style.display = 'block';
                     imgEl.src = "data:image/png;base64," + data.image;
                     
-                    // Muda instrução dependendo do tipo
                     if(data.type === 'math') {
-                        instrucao.innerText = "Resolva a conta na imagem:";
-                        inputField.placeholder = "Resultado (ex: 10)";
+                        instrucao.innerText = "Qual o resultado da soma?";
+                        inputField.placeholder = "?";
                     } else {
                         instrucao.innerText = "Digite os caracteres da imagem:";
-                        inputField.placeholder = "Caracteres";
+                        inputField.placeholder = "TEXTO";
                     }
                     
                     currentToken = data.token;
                     inputField.value = "";
                     inputField.focus();
-                } catch(e) {
-                    msg.innerText = "Erro ao carregar desafio.";
-                }
+                } catch(e) { msg.innerText = "Erro ao conectar."; }
             });
 
             inputBtn.addEventListener('click', async (e) => {
@@ -194,13 +187,13 @@ JS_TEMPLATE = """
                     if (resp.success) {
                         modal.style.display = 'none';
                         checkbox.classList.add('checked');
-                        hiddenInput.value = "TOKEN_VALIDO_V2"; 
+                        hiddenInput.value = "TOKEN_VERIFICADO_OK"; 
                     } else {
                         msg.innerText = "Incorreto. Tente novamente.";
                         inputBtn.innerText = "VERIFICAR";
                         inputField.value = "";
                         inputField.focus();
-                        // Opcional: recarregar desafio aqui se quiser ser rigoroso
+                        checkbox.click(); // Recarrega novo desafio
                     }
                 } catch (e) { 
                     msg.innerText = "Erro ao validar.";
@@ -218,71 +211,108 @@ JS_TEMPLATE = """
 })();
 """
 
-# --- BACKEND ---
+# --- BACKEND (DISTORÇÃO E FONTE GIGANTE) ---
 
 def gerar_assinatura(dados):
     msg = json.dumps(dados, sort_keys=True).encode()
     return hmac.new(SECRET_KEY, msg, hashlib.sha256).hexdigest()
 
-def criar_imagem_bonita(texto):
-    """Gera uma imagem maior, mais legível e com fonte personalizada"""
-    # Tamanho maior (300x100)
-    width, height = 280, 90 
-    image = Image.new('RGB', (width, height), color=(245, 247, 250)) # Fundo cinza bem claro
-    draw = ImageDraw.Draw(image)
+def aplicar_distorcao_onda(imagem):
+    """Aplica um efeito de onda senoidal na imagem"""
+    width, height = imagem.size
+    nova_imagem = Image.new("RGBA", (width, height), (0,0,0,0))
     
-    # 1. Adiciona "Ruído" (Linhas e Pontos) para segurança
-    for _ in range(20): # Linhas
-        x1 = random.randint(0, width)
-        y1 = random.randint(0, height)
-        x2 = random.randint(0, width)
-        y2 = random.randint(0, height)
-        cor = (random.randint(200, 230), random.randint(200, 230), random.randint(200, 230))
-        draw.line([(x1, y1), (x2, y2)], fill=cor, width=2)
+    # Parâmetros da onda (frequencia e amplitude)
+    amplitude = random.randint(4, 7) # Altura da onda
+    frequencia = random.uniform(0.04, 0.07) # Quantas ondas aparecem
+    
+    # Processa coluna por coluna (pixel a pixel horizontal)
+    for x in range(width):
+        # Calcula o deslocamento Y baseado no Seno de X
+        offset_y = int(amplitude * math.sin(2 * math.pi * frequencia * x))
+        
+        # Copia a coluna da imagem original
+        coluna = imagem.crop((x, 0, x + 1, height))
+        
+        # Cola na nova imagem com o deslocamento
+        # O 'max' evita colar fora da tela
+        dest_y = max(0, offset_y)
+        nova_imagem.paste(coluna, (x, dest_y))
+        
+    return nova_imagem
 
-    for _ in range(150): # Pontos
-        xy = (random.randint(0, width), random.randint(0, height))
-        draw.point(xy, fill=(180, 180, 180))
-
-    # 2. Carregar Fonte (Tenta carregar font.ttf, senão usa padrão)
+def criar_imagem_distorcida(texto):
+    # 1. Canvas Muito Maior
+    width, height = 380, 130
+    # Fundo branco com leve cinza
+    background = Image.new('RGB', (width, height), color=(250, 250, 250))
+    draw_bg = ImageDraw.Draw(background)
+    
+    # 2. Ruído de Fundo (Linhas e Círculos)
+    for _ in range(30):
+        x1, y1 = random.randint(0, width), random.randint(0, height)
+        x2, y2 = random.randint(0, width), random.randint(0, height)
+        cor = (random.randint(200, 220), random.randint(200, 220), random.randint(200, 220))
+        draw_bg.line([(x1, y1), (x2, y2)], fill=cor, width=2)
+    
+    # 3. Preparar camada de texto transparente
+    txt_layer = Image.new('RGBA', (width, height), (255, 255, 255, 0))
+    draw_txt = ImageDraw.Draw(txt_layer)
+    
+    # Carregar Fonte Gigante
     try:
-        # Aumentamos o tamanho para 35!
         diretorio_atual = os.path.dirname(os.path.abspath(__file__))
         caminho_fonte = os.path.join(diretorio_atual, 'font.ttf')
-        font = ImageFont.truetype(caminho_fonte, 40)
-        has_font = True
+        # FONTE TAMANHO 85 (DOBRO DO ANTERIOR)
+        font = ImageFont.truetype(caminho_fonte, 85)
     except:
-        font = ImageFont.load_default()
-        has_font = False
-        print("AVISO: Arquivo 'font.ttf' não encontrado. Usando fonte padrão pequena.")
+        font = ImageFont.load_default() # Fallback (ficará pequeno se não tiver a fonte)
 
-    # 3. Desenhar Texto Centralizado e Distorcido
-    text_bbox = draw.textbbox((0, 0), texto, font=font)
-    text_width = text_bbox[2] - text_bbox[0]
-    text_height = text_bbox[3] - text_bbox[1]
+    # 4. Desenhar cada letra separada com rotação
+    # Calcula largura total aproximada para centralizar
+    total_w = len(texto) * 55 # Estimativa por letra
+    start_x = (width - total_w) / 2
     
-    start_x = (width - text_width) / 2
-    start_y = (height - text_height) / 2
+    curr_x = start_x
+    for char in texto:
+        # Cria uma imagem temp só para a letra (para poder girar)
+        char_img = Image.new('RGBA', (100, 100), (0,0,0,0))
+        char_draw = ImageDraw.Draw(char_img)
+        
+        # Cor vibrante e escura
+        cor = (random.randint(20, 100), random.randint(20, 100), random.randint(20, 150))
+        
+        # Desenha a letra no centro da imagem temp
+        char_draw.text((30, 10), char, font=font, fill=cor, stroke_width=2, stroke_fill=(200,200,200))
+        
+        # Rotaciona a letra aleatoriamente
+        rotacao = random.randint(-25, 25)
+        char_rot = char_img.rotate(rotacao, expand=1, resample=Image.BICUBIC)
+        
+        # Cola na camada de texto principal
+        offset_y = random.randint(10, 30)
+        txt_layer.paste(char_rot, (int(curr_x), offset_y), char_rot)
+        
+        curr_x += 50 # Espaçamento entre letras
+        
+    # 5. Aplicar Distorção de Onda (Wave Distortion)
+    txt_layer_distorted = aplicar_distorcao_onda(txt_layer)
+    
+    # 6. Juntar Texto Distorcido com Fundo
+    final_img = Image.alpha_composite(background.convert('RGBA'), txt_layer_distorted)
+    
+    # 7. Adicionar Ruído Frontal (Pontos para confundir OCR)
+    draw_final = ImageDraw.Draw(final_img)
+    for _ in range(400):
+        xy = (random.randint(0, width), random.randint(0, height))
+        draw_final.point(xy, fill=(100, 100, 100))
 
-    # Se tivermos a fonte bonita, desenhamos letra por letra levemente girada/movida
-    if has_font:
-        curr_x = (width - (len(texto) * 25)) / 2 # Calculo manual para espaçamento
-        for char in texto:
-            # Cor escura e variada
-            cor_texto = (random.randint(20, 80), random.randint(20, 80), random.randint(20, 100))
-            
-            # Pequena variação na posição Y
-            offset_y = random.randint(-5, 5)
-            
-            draw.text((curr_x, start_y + offset_y - 10), char, font=font, fill=cor_texto)
-            curr_x += random.randint(30, 45) # Espaçamento entre letras
-    else:
-        # Fonte padrão (fallback)
-        draw.text((start_x, start_y), texto, font=font, fill=(0,0,0))
-
+    # Converter para Base64
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
+    final_img.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode()
+
+# --- ROTAS ---
 
 @app.route('/api.js')
 def servir_script():
@@ -292,70 +322,46 @@ def servir_script():
 
 @app.route('/get-challenge', methods=['GET'])
 def get_challenge():
-    # Sorteia o tipo de desafio
-    tipo = random.choice(['num', 'char', 'mix', 'math'])
+    # Tipos: Letras, Números ou Mistura
+    tipo = random.choice(['num', 'char', 'mix'])
     
     if tipo == 'num':
-        # APENAS NÚMEROS (5 dígitos)
-        texto_exibido = "".join(random.choices("23456789", k=5))
-        resposta_esperada = texto_exibido
-        
+        texto = "".join(random.choices("23456789", k=5))
     elif tipo == 'char':
-        # APENAS LETRAS (5 letras)
-        texto_exibido = "".join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ", k=5))
-        resposta_esperada = texto_exibido
+        texto = "".join(random.choices("ACEFHJKLMNPRTXY", k=5))
+    else:
+        texto = "".join(random.choices("ACEFHKMNP234579", k=5))
         
-    elif tipo == 'math':
-        # DESAFIO MATEMÁTICO VISUAL
-        val_a = random.randint(1, 9)
-        val_b = random.randint(1, 9)
-        texto_exibido = f"{val_a} + {val_b} = ?"
-        resposta_esperada = str(val_a + val_b)
-        
-    else: # 'mix'
-        # MISTURADO
-        texto_exibido = "".join(random.choices("ABCDEFGH23456789", k=5))
-        resposta_esperada = texto_exibido
+    # Para matemática, precisamos adaptar a lógica (simplifiquei aqui para focar na distorção visual de texto)
+    if random.random() < 0.3: # 30% de chance de ser math
+        a, b = random.randint(1, 8), random.randint(1, 8)
+        texto_img = f"{a}+{b}=?"
+        resposta = str(a + b)
+        tipo = 'math'
+    else:
+        texto_img = texto
+        resposta = texto
 
-    # Gera a imagem
-    imagem_b64 = criar_imagem_bonita(texto_exibido)
+    imagem_b64 = criar_imagem_distorcida(texto_img)
     
-    dados = {
-        "ans": resposta_esperada,
-        "ts": time.time(),
-        "salt": random.randint(1000, 9999)
-    }
+    dados = { "ans": resposta, "ts": time.time(), "salt": random.randint(1, 9999) }
+    token = f"{base64.urlsafe_b64encode(json.dumps(dados).encode()).decode()}.{gerar_assinatura(dados)}"
     
-    assinatura = gerar_assinatura(dados)
-    token_b64 = base64.urlsafe_b64encode(json.dumps(dados).encode()).decode()
-    
-    return jsonify({
-        "image": imagem_b64,
-        "token": f"{token_b64}.{assinatura}",
-        "type": tipo # Avisa o frontend qual o tipo para mudar a instrução
-    })
+    return jsonify({ "image": imagem_b64, "token": token, "type": tipo })
 
 @app.route('/verify', methods=['POST'])
 def verify():
     data = request.json
-    if not data: return jsonify({"success": False})
-
-    user_ans = data.get('answer', '').strip().upper() # Ignora maiuscula/minuscula
-    full_token = data.get('token', '')
-
     try:
-        token_b64, signature = full_token.split('.')
+        user_ans = data.get('answer', '').strip().upper()
+        token_b64, sig = data.get('token', '').split('.')
         dados = json.loads(base64.urlsafe_b64decode(token_b64).decode())
         
-        if gerar_assinatura(dados) != signature:
-            return jsonify({"success": False, "error": "Token inválido."})
-            
-        if user_ans == dados['ans'].upper():
-            return jsonify({"success": True})
-        else:
-            return jsonify({"success": False, "error": "Resposta incorreta."})
+        if gerar_assinatura(dados) != sig: return jsonify({"success": False})
+        if user_ans == dados['ans'].upper(): return jsonify({"success": True})
+        return jsonify({"success": False})
     except:
-        return jsonify({"success": False, "error": "Erro servidor."})
+        return jsonify({"success": False})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(debug=True)
