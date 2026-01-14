@@ -14,7 +14,43 @@ import math
 app = Flask(__name__)
 CORS(app)
 
-SECRET_KEY = b"SuaChaveSuperSecreta_MudeIsso123"
+SECRET_KEY = b"Swga413RQWT43TYe22WQRAFWGQ23"
+
+# --- SISTEMA DE DIFICULDADE DINÂMICA ---
+# Armazena histórico: { "IP_DO_CLIENTE": [timestamp1, timestamp2, ...] }
+USER_HISTORY = {}
+
+def get_client_ip():
+    """Pega o IP real, mesmo estando atrás do proxy da Vercel"""
+    if request.headers.get('X-Forwarded-For'):
+        return request.headers.get('X-Forwarded-For').split(',')[0]
+    return request.remote_addr
+
+def get_difficulty_level(ip):
+    """
+    Calcula o nível de dificuldade baseado no histórico dos últimos 3 minutos.
+    Retorna: 0 (Normal), 1 (Difícil), 2 (Extremo)
+    """
+    now = time.time()
+    if ip not in USER_HISTORY:
+        return 0
+    
+    # 1. Filtra: Mantém apenas registros dos últimos 180 segundos (3 min)
+    timestamps = [t for t in USER_HISTORY[ip] if now - t < 180]
+    USER_HISTORY[ip] = timestamps # Atualiza a lista limpa
+    
+    count = len(timestamps)
+    
+    # 2. Define Nível
+    if count < 3: return 0      # Normal
+    if count < 6: return 1      # Difícil (3 a 5 feitos)
+    return 2                    # Extremo (6+ feitos rapidão)
+
+def registrar_sucesso(ip):
+    """Chamado quando o usuário ACERTA o captcha"""
+    if ip not in USER_HISTORY:
+        USER_HISTORY[ip] = []
+    USER_HISTORY[ip].append(time.time())
 
 # --- ROTAS ---
 @app.route("/")
@@ -25,7 +61,7 @@ def sobre():
 def demo():
     return render_template("main.html")
 
-# --- FRONTEND (MANTIDO) ---
+# --- FRONTEND (MANTIDO IGUAL) ---
 JS_TEMPLATE = """
 (function() {
     const API_BASE = "__API_URL__";
@@ -134,32 +170,21 @@ def aplicar_distorcao_onda(imagem):
     return nova_imagem
 
 def criar_texto_ampliado(texto, cor_texto=(0,0,0,255)):
-    """
-    Cria o texto usando Zoom Digital com LÓGICA DE ENCAIXE.
-    Se o texto for muito longo, ele diminui a altura para caber na largura máxima.
-    """
     w_small = len(texto) * 10 + 20
     h_small = 20
     img_small = Image.new('RGBA', (w_small, h_small), (0,0,0,0))
     draw_small = ImageDraw.Draw(img_small)
     font_padrao = ImageFont.load_default()
     draw_small.text((5, 2), texto, font=font_padrao, fill=cor_texto)
-    
-    # Recorta bordas vazias
     bbox = img_small.getbbox()
     if bbox: img_small = img_small.crop(bbox)
     
-    # --- CORREÇÃO DE LARGURA ---
     aspect_ratio = img_small.width / img_small.height
-    
-    # Tenta altura de 90px
     target_height = 90
     target_width = int(target_height * aspect_ratio)
     
-    # O canvas tem 520px de largura. Vamos limitar a 480px de margem de segurança.
     MAX_WIDTH = 480
     if target_width > MAX_WIDTH:
-        # Se ficou muito largo, fixa a largura em 480 e recalcula a altura
         target_width = MAX_WIDTH
         target_height = int(target_width / aspect_ratio)
         
@@ -170,15 +195,11 @@ def criar_imagem_distorcida(texto, cor_texto=(0,0,0)):
     cor_rgba = (cor_texto[0], cor_texto[1], cor_texto[2], 255)
     width, height = 520, 180 
     background = Image.new('RGB', (width, height), color=(245, 245, 250))
-    
-    # Aqui chama a função corrigida que ajusta o tamanho
     texto_img = criar_texto_ampliado(texto, cor_rgba)
-    
     txt_layer = Image.new('RGBA', (width, height), (0,0,0,0))
     pos_x = (width - texto_img.width) // 2
     pos_y = (height - texto_img.height) // 2
     txt_layer.paste(texto_img, (pos_x, pos_y))
-    
     txt_layer = aplicar_distorcao_onda(txt_layer)
     final_img = Image.alpha_composite(background.convert('RGBA'), txt_layer)
     draw_final = ImageDraw.Draw(final_img)
@@ -221,15 +242,15 @@ def servir_script():
 
 @app.route('/get-challenge', methods=['GET'])
 def get_challenge():
-    # TIPOS DE DESAFIO (Sem 'shapes')
-    tipos = [
-        'math_word',   # Matemática por extenso (CORRIGIDO TAMANHO)
-        'color_match', # Botão de cor (Blob)
-        'stroop',      # Efeito Stroop (Texto vs Cor)
-        'position',    # Posição (Primeiro/Meio/Ultimo)
-        'intruder',    # Intruso
-        'normal'       # Texto normal
-    ]
+    # 1. PEGAR IP E CALCULAR NÍVEL
+    client_ip = get_client_ip()
+    nivel_dificuldade = get_difficulty_level(client_ip)
+    
+    # Debug: Mostra no terminal o nível (opcional)
+    # print(f"IP: {client_ip} | Nível: {nivel_dificuldade}")
+
+    # Tipos disponíveis (removido 'shapes')
+    tipos = ['math_word', 'color_match', 'stroop', 'position', 'intruder', 'normal']
     escolha = random.choice(tipos)
     
     texto_img = ""
@@ -238,14 +259,28 @@ def get_challenge():
     options = []
     imagem_b64 = ""
     
-    # 1. MATEMÁTICA POR EXTENSO (Agora com texto ajustado)
+    # --- APLICAÇÃO DA DIFICULDADE (SCALING) ---
+
+    # 1. MATEMÁTICA POR EXTENSO
     if escolha == 'math_word':
-        nums_map = {1: "UM", 2: "DOIS", 3: "TRES", 4: "QUATRO", 5: "CINCO"}
-        val_a = random.randint(1, 5)
-        val_b = random.randint(1, 4)
+        nums_map = {1: "UM", 2: "DOIS", 3: "TRES", 4: "QUATRO", 5: "CINCO", 6: "SEIS", 7: "SETE", 8: "OITO", 9: "NOVE", 10: "DEZ"}
+        
+        if nivel_dificuldade == 0:
+            # Fácil: Soma pequena, números 1-5
+            val_a, val_b = random.randint(1, 4), random.randint(1, 3)
+        elif nivel_dificuldade == 1:
+            # Difícil: Soma média, números 1-8
+            val_a, val_b = random.randint(3, 8), random.randint(2, 6)
+        else:
+            # Extremo: Soma grande, números 5-10
+            val_a, val_b = random.randint(5, 10), random.randint(5, 10)
+
+        # Garante que os valores estejam no mapa
+        val_a = min(val_a, 10)
+        val_b = min(val_b, 10)
+
         if random.random() < 0.5:
-            # Pode gerar texto longo: "QUATRO + QUATRO"
-            expr_str = f"{nums_map[val_a]} + {nums_map[val_b]}" if random.random() < 0.3 else f"{nums_map[val_a]} + {val_b}"
+            expr_str = f"{nums_map[val_a]} + {val_b}"
         else:
             expr_str = f"{val_a} + {nums_map[val_b]}"
             
@@ -254,7 +289,21 @@ def get_challenge():
         instrucao = "Resolva a soma (digite o número):"
         imagem_b64 = criar_imagem_distorcida(texto_img)
 
-    # 2. STROOP
+    # 2. NORMAL (CARACTERES)
+    elif escolha == 'normal':
+        # Nível 0: 5 chars
+        # Nível 1: 6 chars
+        # Nível 2: 8 chars
+        comp = 5
+        if nivel_dificuldade == 1: comp = 6
+        elif nivel_dificuldade == 2: comp = 8
+        
+        texto_img = "".join(random.choices("ACEFHKMNP234579", k=comp))
+        resposta = texto_img
+        instrucao = "Digite os caracteres:"
+        imagem_b64 = criar_imagem_distorcida(texto_img)
+    
+    # 3. STROOP (Mantido, difícil por natureza)
     elif escolha == 'stroop':
         cores = {'VERMELHO': (200,0,0), 'AZUL': (0,0,200), 'VERDE': (0,180,0), 'ROXO': (128,0,128)}
         nomes = list(cores.keys())
@@ -267,19 +316,30 @@ def get_challenge():
         random.shuffle(options)
         imagem_b64 = criar_imagem_stroop(texto_img, cores[cor_tinta_nome])
 
-    # 3. POSIÇÃO
+    # 4. POSIÇÃO
     elif escolha == 'position':
-        chars = random.sample("ABCDEFGHMNPRT23456789", 3)
-        texto_img = f"{chars[0]}   {chars[1]}   {chars[2]}"
-        r = random.random()
-        if r < 0.33: instrucao, resposta = "Digite o PRIMEIRO caractere:", chars[0]
-        elif r < 0.66: instrucao, resposta = "Digite o caractere do MEIO:", chars[1]
-        else: instrucao, resposta = "Digite o ÚLTIMO caractere:", chars[2]
+        # Aumenta a quantidade de caracteres no nível difícil
+        qtd = 3
+        if nivel_dificuldade >= 1: qtd = 4
+        if nivel_dificuldade >= 2: qtd = 5
+        
+        chars = random.sample("ABCDEFGHMNPRT23456789", qtd)
+        texto_img = "   ".join(chars)
+        
+        # Lógica simples para pegar posições
+        idx_alvo = random.randint(0, qtd-1)
+        if idx_alvo == 0: instrucao = "Digite o PRIMEIRO caractere:"
+        elif idx_alvo == qtd-1: instrucao = "Digite o ÚLTIMO caractere:"
+        else: instrucao = f"Digite o {idx_alvo+1}º caractere:" # Ex: 2º, 3º
+        
+        resposta = chars[idx_alvo]
         imagem_b64 = criar_imagem_distorcida(texto_img)
 
-    # 4. INTRUSO
+    # 5. INTRUSO
     elif escolha == 'intruder':
-        nums = random.choices("23456789", k=3)
+        # Mais números para confundir em níveis altos
+        qtd_nums = 3 + nivel_dificuldade # 3, 4 ou 5 números
+        nums = random.choices("23456789", k=qtd_nums)
         letra = random.choice("ABCDEFGH")
         itens = nums + [letra]; random.shuffle(itens)
         texto_img = " ".join(itens)
@@ -287,7 +347,7 @@ def get_challenge():
         resposta = letra
         imagem_b64 = criar_imagem_distorcida(texto_img)
 
-    # 5. COLOR MATCH
+    # 6. COLOR MATCH
     elif escolha == 'color_match':
         cores_dict = {'VERMELHO': (200,40,40), 'VERDE': (40,200,40), 'AZUL': (40,40,200)}
         nomes_cores = list(cores_dict.keys())
@@ -296,13 +356,6 @@ def get_challenge():
         img = Image.new('RGB', (520, 180), (245, 245, 250)); d = ImageDraw.Draw(img)
         d.ellipse([220, 50, 300, 130], fill=cores_dict[cor_correta])
         buf = io.BytesIO(); img.save(buf, format="PNG"); imagem_b64 = base64.b64encode(buf.getvalue()).decode()
-
-    # 6. NORMAL
-    else:
-        texto_img = "".join(random.choices("ACEFHKMNP234579", k=5))
-        resposta = texto_img
-        instrucao = "Digite os caracteres:"
-        imagem_b64 = criar_imagem_distorcida(texto_img)
 
     dados = { "ans": resposta, "ts": time.time(), "salt": random.randint(1, 9999) }
     token = f"{base64.urlsafe_b64encode(json.dumps(dados).encode()).decode()}.{gerar_assinatura(dados)}"
@@ -318,10 +371,16 @@ def verify():
         dados = json.loads(base64.urlsafe_b64decode(token_b64).decode())
         if gerar_assinatura(dados) != sig: return jsonify({"success": False})
         if time.time() - dados['ts'] > 300: return jsonify({"success": False})
+        
         if user_ans == dados['ans'].upper():
+            # ACERTOU: Registra no histórico para aumentar dificuldade
+            client_ip = get_client_ip()
+            registrar_sucesso(client_ip)
+
             payload_sucesso = { "valid": True, "ts_passed": time.time(), "expires_at": time.time() + 300, "nonce": random.randint(100000, 999999) }
             token_final = f"{base64.urlsafe_b64encode(json.dumps(payload_sucesso).encode()).decode()}.{gerar_assinatura(payload_sucesso)}"
             return jsonify({ "success": True, "verification_token": token_final })
+        
         return jsonify({"success": False})
     except: return jsonify({"success": False})
 
