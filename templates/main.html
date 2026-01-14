@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>demo</title>
+</head>
+<body style="font-family: 'Segoe UI', Arial, sans-serif; padding: 50px; background-color: #f3f4f6;">
+
+    <div style="background: white; padding: 30px; border-radius: 12px; max-width: 400px; margin: 0 auto; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
+        <h2 style="text-align: center; color: #111827;">Login Cagado Dos Inferno</h2>
+
+        <form id="form-login">
+            <label style="display: block; margin-bottom: 5px; font-weight: 500;">Usuário:</label>
+            <input type="text" placeholder="Seu nome..." required style="width: 100%; padding: 10px; margin-bottom: 20px; border: 1px solid #d1d5db; border-radius: 6px; box-sizing: border-box;">
+
+            <div class="nix-ptcha"></div>
+
+            <div id="status-msg" style="margin-top: 15px; text-align: center; font-size: 14px; min-height: 20px;"></div>
+
+            <button type="submit" id="btn-enviar" style="width: 100%; background: #2563eb; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; cursor: pointer; margin-top: 20px;">
+                ENTRAR
+            </button>
+        </form>
+    </div>
+
+    <script src="https://ni-x-ptcha.vercel.app/api.js" async defer></script>
+
+    <script>
+        const form = document.getElementById('form-login');
+        const msgDiv = document.getElementById('status-msg');
+        const btn = document.getElementById('btn-enviar');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault(); // Impede o recarregamento da página
+
+            // 1. Pega o token do campo oculto
+            const tokenInput = document.getElementsByName('nix-ptcha-response')[0];
+            const token = tokenInput ? tokenInput.value : null;
+
+            msgDiv.style.color = '#dc2626'; // Vermelho por padrão
+
+            // 2. Validação Local: O usuário completou o desafio?
+            if (!token) {
+                msgDiv.innerText = "❌ Por favor, complete o desafio de segurança.";
+                return;
+            }
+
+            // 3. Validação Remota: O token é válido e não expirou?
+            msgDiv.style.color = '#2563eb';
+            msgDiv.innerText = "🔄 Verificando token no servidor...";
+            btn.disabled = true;
+
+            try {
+                // Envia para a rota /validate que criamos no Python
+                const req = await fetch('https://ni-x-ptcha.vercel.app/validate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: token })
+                });
+
+                const resp = await req.json();
+
+                if (resp.valid) {
+                    msgDiv.style.color = '#059669'; // Verde
+                    msgDiv.innerText = "✅ SUCESSO! Token verificado e válido.";
+                } else {
+                    msgDiv.style.color = '#dc2626'; // Vermelho
+                    msgDiv.innerText = `❌ Erro: ${resp.error || 'Token inválido'}`;
+                }
+
+            } catch (err) {
+                msgDiv.style.color = '#dc2626';
+                msgDiv.innerText = "❌ Erro de conexão com o servidor.";
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    </script>
+
+</body>
+</html>
