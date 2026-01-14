@@ -1,6 +1,6 @@
 from flask import Flask, Response, request, jsonify
 from flask_cors import CORS
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import io
 import time
 import hashlib
@@ -10,41 +10,13 @@ import json
 import base64
 import os
 import math
-import requests # <--- Necessário para baixar a fonte
 
 app = Flask(__name__)
 CORS(app)
 
 SECRET_KEY = b"SuaChaveSuperSecreta_MudeIsso123"
 
-# --- CONFIGURAÇÃO DA FONTE AUTOMÁTICA (VERCEL FRIENDLY) ---
-FONT_URL = "https://github.com/google/fonts/raw/main/apache/robotoslab/RobotoSlab-Bold.ttf"
-# Na Vercel, só podemos escrever em /tmp
-FONT_PATH = "/tmp/robotoslab-bold.ttf" 
-
-def carregar_fonte(tamanho):
-    """
-    Tenta carregar a fonte do /tmp. Se não existir, baixa da internet.
-    """
-    # 1. Se o arquivo ainda não existe no /tmp, baixa ele
-    if not os.path.exists(FONT_PATH):
-        print("Baixando fonte para /tmp...")
-        try:
-            response = requests.get(FONT_URL, timeout=5)
-            with open(FONT_PATH, 'wb') as f:
-                f.write(response.content)
-            print("Fonte baixada com sucesso!")
-        except Exception as e:
-            print(f"Erro ao baixar fonte: {e}")
-            return ImageFont.load_default() # Fallback triste
-
-    # 2. Carrega a fonte do arquivo local
-    try:
-        return ImageFont.truetype(FONT_PATH, tamanho)
-    except:
-        return ImageFont.load_default()
-
-# --- FRONTEND (Mesmo de antes) ---
+# --- FRONTEND (MANTIDO IGUAL) ---
 JS_TEMPLATE = """
 (function() {
     const API_BASE = "__API_URL__";
@@ -241,74 +213,102 @@ JS_TEMPLATE = """
 })();
 """
 
-# --- BACKEND (LÓGICA DO CAPTCHA) ---
+# --- BACKEND REESCRITO (SEM DEPENDÊNCIA DE FONTE EXTERNA) ---
 
 def gerar_assinatura(dados):
     msg = json.dumps(dados, sort_keys=True).encode()
     return hmac.new(SECRET_KEY, msg, hashlib.sha256).hexdigest()
 
+def criar_texto_ampliado(texto):
+    """
+    TRUQUE: Desenha o texto pequeno usando a fonte padrão do sistema,
+    e depois estica a imagem (Zoom Digital) para ficar gigante.
+    Isso funciona em 100% dos servidores sem precisar de arquivo .ttf
+    """
+    # 1. Cria um canvas pequeno onde a fonte padrão (aprox 11px) caiba
+    w_small = len(texto) * 10 + 20
+    h_small = 20
+    img_small = Image.new('RGBA', (w_small, h_small), (0,0,0,0))
+    draw_small = ImageDraw.Draw(img_small)
+    
+    # 2. Desenha texto branco usando fonte padrão (fallback garantido)
+    font_padrao = ImageFont.load_default()
+    draw_small.text((5, 2), texto, font=font_padrao, fill=(0,0,0,255))
+    
+    # 3. Recorta as bordas vazias para focar no texto
+    bbox = img_small.getbbox()
+    if bbox:
+        img_small = img_small.crop(bbox)
+        
+    # 4. Define o tamanho final GIGANTE
+    # Queremos que o texto tenha uns 80px de altura
+    target_height = 90
+    aspect_ratio = img_small.width / img_small.height
+    target_width = int(target_height * aspect_ratio)
+    
+    # 5. Redimensiona (Usa NEAREST para efeito pixelado nítido ou BICUBIC para suave)
+    # NEAREST é melhor para OCR jamming e estilo
+    img_large = img_small.resize((target_width, target_height), resample=Image.NEAREST)
+    
+    return img_large
+
 def aplicar_distorcao_onda(imagem):
     width, height = imagem.size
     nova_imagem = Image.new("RGBA", (width, height), (0,0,0,0))
     
-    amplitude = random.randint(5, 8) 
-    frequencia = random.uniform(0.03, 0.05)
+    # Parâmetros da onda
+    amplitude = random.randint(4, 7)
+    frequencia = random.uniform(0.04, 0.06)
     
     for x in range(width):
         offset_y = int(amplitude * math.sin(2 * math.pi * frequencia * x))
-        coluna = imagem.crop((x, 0, x + 1, height))
         dest_y = max(0, offset_y)
+        
+        # Copia coluna vertical
+        coluna = imagem.crop((x, 0, x + 1, height))
         nova_imagem.paste(coluna, (x, dest_y))
         
     return nova_imagem
 
 def criar_imagem_distorcida(texto):
+    # 1. Canvas Final Grande
     width, height = 520, 180 
-    
-    background = Image.new('RGB', (width, height), color=(250, 250, 250))
+    background = Image.new('RGB', (width, height), color=(245, 245, 250))
     draw_bg = ImageDraw.Draw(background)
     
-    # Linhas de ruído
-    for _ in range(25): 
+    # 2. Gera o texto gigante sem precisar de fonte .ttf
+    texto_img = criar_texto_ampliado(texto)
+    
+    # 3. Cria uma camada transparente para colocar o texto
+    txt_layer = Image.new('RGBA', (width, height), (0,0,0,0))
+    
+    # Centraliza o texto na imagem
+    pos_x = (width - texto_img.width) // 2
+    pos_y = (height - texto_img.height) // 2
+    
+    # Cola o texto ampliado na camada transparente
+    txt_layer.paste(texto_img, (pos_x, pos_y))
+    
+    # 4. Aplica distorção de onda no texto
+    txt_layer = aplicar_distorcao_onda(txt_layer)
+    
+    # 5. Junta fundo + texto
+    final_img = Image.alpha_composite(background.convert('RGBA'), txt_layer)
+    
+    # 6. Adiciona Ruído (Linhas e Pontos) para dificultar OCR
+    draw_final = ImageDraw.Draw(final_img)
+    
+    # Linhas aleatórias
+    for _ in range(15):
         x1, y1 = random.randint(0, width), random.randint(0, height)
         x2, y2 = random.randint(0, width), random.randint(0, height)
-        cor = (random.randint(180, 220), random.randint(180, 220), random.randint(180, 220))
-        draw_bg.line([(x1, y1), (x2, y2)], fill=cor, width=2)
-    
-    txt_layer = Image.new('RGBA', (width, height), (255, 255, 255, 0))
-    
-    # --- AQUI ESTÁ A MÁGICA ---
-    # Chama a função que baixa a fonte automaticamente para o /tmp
-    font = carregar_fonte(95) # Fonte tamanho 95 (Roboto Slab é grande)
-
-    estimativa_largura = len(texto) * 65
-    start_x = (width - estimativa_largura) / 2
-    curr_x = start_x if start_x > 0 else 20
-    
-    for char in texto:
-        char_img = Image.new('RGBA', (150, 180), (0,0,0,0)) 
-        char_draw = ImageDraw.Draw(char_img)
+        cor_linha = (random.randint(150, 200), random.randint(150, 200), random.randint(150, 200))
+        draw_final.line([(x1, y1), (x2, y2)], fill=cor_linha, width=2)
         
-        cor = (random.randint(20, 80), random.randint(20, 80), random.randint(20, 100))
-        
-        # Ajuste de posição vertical para Roboto Slab
-        char_draw.text((30, 20), char, font=font, fill=cor)
-        
-        rotacao = random.randint(-20, 20)
-        char_rot = char_img.rotate(rotacao, expand=1, resample=Image.BICUBIC)
-        
-        offset_y = random.randint(10, 40)
-        
-        txt_layer.paste(char_rot, (int(curr_x), offset_y), char_rot)
-        curr_x += 75 
-        
-    txt_layer_distorted = aplicar_distorcao_onda(txt_layer)
-    final_img = Image.alpha_composite(background.convert('RGBA'), txt_layer_distorted)
-    
-    draw_final = ImageDraw.Draw(final_img)
-    for _ in range(300):
+    # Pontos (Noise)
+    for _ in range(400):
         xy = (random.randint(0, width), random.randint(0, height))
-        draw_final.point(xy, fill=(120, 120, 120))
+        draw_final.point(xy, fill=(100, 100, 100))
         
     buffer = io.BytesIO()
     final_img.save(buffer, format="PNG")
@@ -334,15 +334,15 @@ def get_challenge():
         op = random.choice(['+', '-', '*'])
         if op == '+':
             a, b = random.randint(1, 9), random.randint(1, 9)
-            texto_img = f"{a}+{b}"
+            texto_img = f"{a}+{b}=?"
             resposta = str(a + b)
         elif op == '-':
             a, b = random.randint(5, 15), random.randint(1, 5)
-            texto_img = f"{a}-{b}"
+            texto_img = f"{a}-{b}=?"
             resposta = str(a - b)
         elif op == '*':
             a, b = random.randint(2, 6), random.randint(2, 4)
-            texto_img = f"{a}x{b}"
+            texto_img = f"{a}x{b}=?"
             resposta = str(a * b)
     else:
         if escolha == 'num': pool = "23456789"
@@ -351,6 +351,7 @@ def get_challenge():
         texto_img = "".join(random.choices(pool, k=5))
         resposta = texto_img
 
+    # Gera a imagem usando a técnica de ampliação
     imagem_b64 = criar_imagem_distorcida(texto_img)
     
     dados = { "ans": resposta, "ts": time.time(), "salt": random.randint(1, 9999) }
