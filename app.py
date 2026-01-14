@@ -1,4 +1,4 @@
-from flask import Flask, Response, request, jsonify
+from flask import Flask, Response, request, jsonify, render_template
 from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
 import io
@@ -444,6 +444,14 @@ def validate_token():
         return jsonify({"valid": True, "ts": payload.get('ts_passed')})
     except Exception as e:
         return jsonify({"valid": False, "error": str(e)})
+
+@app.route("/")
+def sobre():
+    return render_template("main.html")
+
+@app.route("/demo")
+def demo():
+    return render_template("main.html")
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
