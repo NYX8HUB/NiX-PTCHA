@@ -1,6 +1,6 @@
 from flask import Flask, Response, request, jsonify, render_template
 from flask_cors import CORS
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont
 import io
 import time
 import hashlib
@@ -25,7 +25,7 @@ def sobre():
 def demo():
     return render_template("main.html")
 
-# --- FRONTEND (TEMPLATE JS MANTIDO) ---
+# --- FRONTEND (MANTIDO) ---
 JS_TEMPLATE = """
 (function() {
     const API_BASE = "__API_URL__";
@@ -116,11 +116,11 @@ JS_TEMPLATE = """
 """
 
 # --- FUNÇÕES GRÁFICAS ---
+
 def gerar_assinatura(dados):
     msg = json.dumps(dados, sort_keys=True).encode()
     return hmac.new(SECRET_KEY, msg, hashlib.sha256).hexdigest()
 
-# Distorção "leve" para textos
 def aplicar_distorcao_onda(imagem):
     width, height = imagem.size
     nova_imagem = Image.new("RGBA", (width, height), (0,0,0,0))
@@ -133,41 +133,36 @@ def aplicar_distorcao_onda(imagem):
         nova_imagem.paste(coluna, (x, dest_y))
     return nova_imagem
 
-# --- NOVA: Distorção PESADA para formas ---
-def aplicar_distorcao_extrema(imagem):
-    """Aplica ondas fortes verticais e horizontais"""
-    width, height = imagem.size
-    # 1. Onda Vertical Forte
-    img_v = Image.new("RGBA", (width, height), (0,0,0,0))
-    amp_v = random.randint(8, 14)
-    freq_v = random.uniform(0.05, 0.09)
-    for x in range(width):
-        off_y = int(amp_v * math.sin(2 * math.pi * freq_v * x))
-        col = imagem.crop((x, 0, x+1, height))
-        img_v.paste(col, (x, max(0, off_y)))
-    
-    # 2. Onda Horizontal Forte (sobre o resultado)
-    img_h = Image.new("RGBA", (width, height), (0,0,0,0))
-    amp_h = random.randint(8, 14)
-    freq_h = random.uniform(0.05, 0.09)
-    for y in range(height):
-        off_x = int(amp_h * math.cos(2 * math.pi * freq_h * y))
-        row = img_v.crop((0, y, width, y+1))
-        img_h.paste(row, (max(0, off_x), y))
-    return img_h
-
 def criar_texto_ampliado(texto, cor_texto=(0,0,0,255)):
+    """
+    Cria o texto usando Zoom Digital com LÓGICA DE ENCAIXE.
+    Se o texto for muito longo, ele diminui a altura para caber na largura máxima.
+    """
     w_small = len(texto) * 10 + 20
     h_small = 20
     img_small = Image.new('RGBA', (w_small, h_small), (0,0,0,0))
     draw_small = ImageDraw.Draw(img_small)
     font_padrao = ImageFont.load_default()
     draw_small.text((5, 2), texto, font=font_padrao, fill=cor_texto)
+    
+    # Recorta bordas vazias
     bbox = img_small.getbbox()
     if bbox: img_small = img_small.crop(bbox)
-    target_height = 90
+    
+    # --- CORREÇÃO DE LARGURA ---
     aspect_ratio = img_small.width / img_small.height
+    
+    # Tenta altura de 90px
+    target_height = 90
     target_width = int(target_height * aspect_ratio)
+    
+    # O canvas tem 520px de largura. Vamos limitar a 480px de margem de segurança.
+    MAX_WIDTH = 480
+    if target_width > MAX_WIDTH:
+        # Se ficou muito largo, fixa a largura em 480 e recalcula a altura
+        target_width = MAX_WIDTH
+        target_height = int(target_width / aspect_ratio)
+        
     img_large = img_small.resize((target_width, target_height), resample=Image.NEAREST)
     return img_large
 
@@ -175,11 +170,15 @@ def criar_imagem_distorcida(texto, cor_texto=(0,0,0)):
     cor_rgba = (cor_texto[0], cor_texto[1], cor_texto[2], 255)
     width, height = 520, 180 
     background = Image.new('RGB', (width, height), color=(245, 245, 250))
+    
+    # Aqui chama a função corrigida que ajusta o tamanho
     texto_img = criar_texto_ampliado(texto, cor_rgba)
+    
     txt_layer = Image.new('RGBA', (width, height), (0,0,0,0))
     pos_x = (width - texto_img.width) // 2
     pos_y = (height - texto_img.height) // 2
     txt_layer.paste(texto_img, (pos_x, pos_y))
+    
     txt_layer = aplicar_distorcao_onda(txt_layer)
     final_img = Image.alpha_composite(background.convert('RGBA'), txt_layer)
     draw_final = ImageDraw.Draw(final_img)
@@ -191,52 +190,22 @@ def criar_imagem_distorcida(texto, cor_texto=(0,0,0)):
     final_img.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode()
 
-# --- NOVA: Gerador de Círculos Pesados ---
-def criar_imagem_circulos_pesada(num_circulos):
+def criar_imagem_cor(cor_rgb):
     width, height = 520, 180
-    # Fundo com ruído inicial
-    background = Image.new('RGB', (width, height), color=(235, 235, 240))
-    draw_bg = ImageDraw.Draw(background)
-    for _ in range(600): draw_bg.point((random.randint(0,width), random.randint(0,height)), fill=(210,210,210))
-
-    # Camada de Formas (RGBA)
-    shape_layer = Image.new('RGBA', (width, height), (0,0,0,0))
-    draw_shape = ImageDraw.Draw(shape_layer)
-
-    # Desenha Círculos Alvo
-    for _ in range(num_circulos):
-        x = random.randint(30, 450)
-        y = random.randint(30, 120)
-        tamanho = random.randint(35, 65)
-        cor = (random.randint(60, 200), random.randint(60, 200), random.randint(60, 200), 255)
-        # Varia entre preenchido e contorno grosso
-        if random.random() < 0.6:
-            draw_shape.ellipse([x, y, x+tamanho, y+tamanho], fill=cor)
-        else:
-            draw_shape.ellipse([x, y, x+tamanho, y+tamanho], outline=cor, width=random.randint(4,7))
-
-    # Adiciona "Lixo" (Manchas retangulares que não são círculos)
-    for _ in range(random.randint(3, 6)):
-         x, y = random.randint(0, width-50), random.randint(0, height-50)
-         r_w, r_h = random.randint(20, 40), random.randint(20, 40)
-         cor_lixo = (random.randint(160,210), random.randint(160,210), random.randint(160,210), 180)
-         draw_shape.rectangle([x,y,x+r_w,y+r_h], fill=cor_lixo)
-
-    # APLICA DISTORÇÃO EXTREMA NAS FORMAS
-    distorted_layer = aplicar_distorcao_extrema(shape_layer)
-    
-    # Composição final
-    final_img = Image.alpha_composite(background.convert('RGBA'), distorted_layer)
-    
-    # Ruído Final Pesado (Linhas grossas por cima de tudo)
-    draw_final = ImageDraw.Draw(final_img)
-    for _ in range(30):
-         draw_final.line([(random.randint(0, width), random.randint(0, height)),
-                          (random.randint(0, width), random.randint(0, height))],
-                         fill=(120,120,120), width=3)
-
+    background = Image.new('RGB', (width, height), color=(245, 245, 250))
+    draw = ImageDraw.Draw(background)
+    cx, cy = width // 2, height // 2
+    r = 70
+    draw.ellipse((cx-r, cy-r, cx+r, cy+r), fill=cor_rgb)
+    for _ in range(500):
+        ox = random.randint(cx-r, cx+r)
+        oy = random.randint(cy-r, cy+r)
+        noise_r = max(0, min(255, cor_rgb[0] + random.randint(-20, 20)))
+        noise_g = max(0, min(255, cor_rgb[1] + random.randint(-20, 20)))
+        noise_b = max(0, min(255, cor_rgb[2] + random.randint(-20, 20)))
+        draw.point((ox, oy), fill=(noise_r, noise_g, noise_b))
     buffer = io.BytesIO()
-    final_img.save(buffer, format="PNG")
+    background.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode()
 
 def criar_imagem_stroop(texto, cor_tinta_rgb):
@@ -252,12 +221,12 @@ def servir_script():
 
 @app.route('/get-challenge', methods=['GET'])
 def get_challenge():
+    # TIPOS DE DESAFIO (Sem 'shapes')
     tipos = [
-        'shapes',      # Contar CÍRCULOS (Pesado)
-        'math_word',   # Matemática por extenso
+        'math_word',   # Matemática por extenso (CORRIGIDO TAMANHO)
         'color_match', # Botão de cor (Blob)
         'stroop',      # Efeito Stroop (Texto vs Cor)
-        'position',    # Posição
+        'position',    # Posição (Primeiro/Meio/Ultimo)
         'intruder',    # Intruso
         'normal'       # Texto normal
     ]
@@ -269,25 +238,23 @@ def get_challenge():
     options = []
     imagem_b64 = ""
     
-    # --- LÓGICA ATUALIZADA PARA 'shapes' ---
-    if escolha == 'shapes':
-        # Gera entre 4 e 8 círculos
-        count = random.randint(4, 8)
-        # Usa a nova função de distorção pesada
-        imagem_b64 = criar_imagem_circulos_pesada(count)
-        instrucao = "Quantos CÍRCULOS (bolas) existem?"
-        resposta = str(count)
-    # ---------------------------------------
-
-    elif escolha == 'math_word':
+    # 1. MATEMÁTICA POR EXTENSO (Agora com texto ajustado)
+    if escolha == 'math_word':
         nums_map = {1: "UM", 2: "DOIS", 3: "TRES", 4: "QUATRO", 5: "CINCO"}
-        val_a, val_b = random.randint(1, 5), random.randint(1, 4)
-        expr_str = f"{nums_map[val_a]} + {val_b}" if random.random() < 0.5 else f"{val_a} + {nums_map[val_b]}"
+        val_a = random.randint(1, 5)
+        val_b = random.randint(1, 4)
+        if random.random() < 0.5:
+            # Pode gerar texto longo: "QUATRO + QUATRO"
+            expr_str = f"{nums_map[val_a]} + {nums_map[val_b]}" if random.random() < 0.3 else f"{nums_map[val_a]} + {val_b}"
+        else:
+            expr_str = f"{val_a} + {nums_map[val_b]}"
+            
         texto_img = f"{expr_str} = ?"
         resposta = str(val_a + val_b)
         instrucao = "Resolva a soma (digite o número):"
         imagem_b64 = criar_imagem_distorcida(texto_img)
 
+    # 2. STROOP
     elif escolha == 'stroop':
         cores = {'VERMELHO': (200,0,0), 'AZUL': (0,0,200), 'VERDE': (0,180,0), 'ROXO': (128,0,128)}
         nomes = list(cores.keys())
@@ -300,6 +267,7 @@ def get_challenge():
         random.shuffle(options)
         imagem_b64 = criar_imagem_stroop(texto_img, cores[cor_tinta_nome])
 
+    # 3. POSIÇÃO
     elif escolha == 'position':
         chars = random.sample("ABCDEFGHMNPRT23456789", 3)
         texto_img = f"{chars[0]}   {chars[1]}   {chars[2]}"
@@ -309,6 +277,7 @@ def get_challenge():
         else: instrucao, resposta = "Digite o ÚLTIMO caractere:", chars[2]
         imagem_b64 = criar_imagem_distorcida(texto_img)
 
+    # 4. INTRUSO
     elif escolha == 'intruder':
         nums = random.choices("23456789", k=3)
         letra = random.choice("ABCDEFGH")
@@ -318,6 +287,7 @@ def get_challenge():
         resposta = letra
         imagem_b64 = criar_imagem_distorcida(texto_img)
 
+    # 5. COLOR MATCH
     elif escolha == 'color_match':
         cores_dict = {'VERMELHO': (200,40,40), 'VERDE': (40,200,40), 'AZUL': (40,40,200)}
         nomes_cores = list(cores_dict.keys())
@@ -327,7 +297,8 @@ def get_challenge():
         d.ellipse([220, 50, 300, 130], fill=cores_dict[cor_correta])
         buf = io.BytesIO(); img.save(buf, format="PNG"); imagem_b64 = base64.b64encode(buf.getvalue()).decode()
 
-    else: # Normal
+    # 6. NORMAL
+    else:
         texto_img = "".join(random.choices("ACEFHKMNP234579", k=5))
         resposta = texto_img
         instrucao = "Digite os caracteres:"
