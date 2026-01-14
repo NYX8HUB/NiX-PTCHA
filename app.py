@@ -184,7 +184,8 @@ JS_TEMPLATE = """
                     if (resp.success) {
                         modal.style.display = 'none';
                         checkbox.classList.add('checked');
-                        hiddenInput.value = "TOKEN_VERIFICADO_OK"; 
+                        // INSERE O TOKEN SEGURO NO INPUT HIDDEN
+                        hiddenInput.value = resp.verification_token; 
                     } else {
                         msg.innerText = "Incorreto. Tente novamente.";
                         inputBtn.innerText = "VERIFICAR";
@@ -208,14 +209,19 @@ JS_TEMPLATE = """
 })();
 """
 
-# --- BACKEND (ZOOM DIGITAL) ---
+# --- BACKEND (ZOOM DIGITAL + LOGICA) ---
 
 def gerar_assinatura(dados):
     msg = json.dumps(dados, sort_keys=True).encode()
     return hmac.new(SECRET_KEY, msg, hashlib.sha256).hexdigest()
 
 def criar_texto_ampliado(texto):
-    """Zoom Digital para não depender de fontes externas"""
+    """
+    Técnica de Zoom Digital: 
+    1. Cria texto pequeno com fonte padrão.
+    2. Amplia usando NEAREST neighbor para ficar nítido e grande.
+    Funciona em qualquer servidor sem arquivos de fonte.
+    """
     w_small = len(texto) * 10 + 20
     h_small = 20
     img_small = Image.new('RGBA', (w_small, h_small), (0,0,0,0))
@@ -231,7 +237,6 @@ def criar_texto_ampliado(texto):
     aspect_ratio = img_small.width / img_small.height
     target_width = int(target_height * aspect_ratio)
     
-    # NEAREST mantém o visual "pixel art" nítido
     img_large = img_small.resize((target_width, target_height), resample=Image.NEAREST)
     return img_large
 
@@ -285,7 +290,7 @@ def servir_script():
 
 @app.route('/get-challenge', methods=['GET'])
 def get_challenge():
-    # TIPOS DE DESAFIO (AGORA INCLUINDO MAIOR/MENOR)
+    # TIPOS SELECIONADOS
     tipos = ['normal', 'math', 'max_min']
     escolha = random.choice(tipos)
     
@@ -310,32 +315,24 @@ def get_challenge():
             resposta = str(a * b)
         instrucao = "Resolva o cálculo abaixo:"
 
-    # 2. NOVO: MAIOR OU MENOR NÚMERO
+    # 2. MAIOR OU MENOR NÚMERO
     elif escolha == 'max_min':
-        # Gera 3 números distintos entre 1 e 50
         nums = random.sample(range(1, 50), 3)
-        
-        # Decide aleatoriamente se pede o MAIOR ou o MENOR
         if random.random() < 0.5:
-            # Pede o Maior
             target = max(nums)
             instrucao = "Digite o MAIOR número:"
         else:
-            # Pede o Menor
             target = min(nums)
             instrucao = "Digite o MENOR número:"
-        
-        # Formata com espaços extras para ficar visível na imagem
         texto_img = f"{nums[0]}   {nums[1]}   {nums[2]}"
         resposta = str(target)
 
-    # 3. TEXTO NORMAL (PADRÃO)
+    # 3. TEXTO NORMAL
     else:
         texto_img = "".join(random.choices("ACEFHKMNP234579", k=5))
         resposta = texto_img
         instrucao = "Digite os caracteres da imagem:"
 
-    # Gera a imagem
     imagem_b64 = criar_imagem_distorcida(texto_img)
     
     dados = { "ans": resposta, "ts": time.time(), "salt": random.randint(1, 9999) }
@@ -353,21 +350,73 @@ def verify():
     data = request.json
     try:
         user_ans = data.get('answer', '').strip().upper()
-        # Remove espaços (importante para evitar erro se user digitar " 10 ")
         user_ans = user_ans.replace(" ", "")
         
         token_b64, sig = data.get('token', '').split('.')
         dados = json.loads(base64.urlsafe_b64decode(token_b64).decode())
         
         if gerar_assinatura(dados) != sig: return jsonify({"success": False})
-        
         if time.time() - dados['ts'] > 300: return jsonify({"success": False})
         
-        if user_ans == dados['ans'].upper(): return jsonify({"success": True})
+        if user_ans == dados['ans'].upper():
+            # SUCESSO! GERA O TOKEN FINAL TEMPORÁRIO
+            payload_sucesso = {
+                "valid": True,
+                "ts_passed": time.time(),
+                "expires_at": time.time() + 300, # Expira em 5 minutos
+                "nonce": random.randint(100000, 999999)
+            }
+            token_final = f"{base64.urlsafe_b64encode(json.dumps(payload_sucesso).encode()).decode()}.{gerar_assinatura(payload_sucesso)}"
+            
+            return jsonify({
+                "success": True, 
+                "verification_token": token_final 
+            })
         
         return jsonify({"success": False})
     except:
         return jsonify({"success": False})
+
+# --- ROTA DE VALIDAÇÃO HÍBRIDA (GET e POST) ---
+@app.route('/validate', methods=['GET', 'POST'])
+def validate_token():
+    """
+    Valida se o token nix-ptcha-response é legítimo e não expirou.
+    """
+    token_recebido = None
+
+    if request.method == 'GET':
+        token_recebido = request.args.get('token')
+    else:
+        data = request.get_json(silent=True)
+        if data:
+            token_recebido = data.get('token')
+        else:
+            token_recebido = request.form.get('token')
+
+    if not token_recebido or "." not in token_recebido:
+        return jsonify({"valid": False, "error": "Formato inválido"})
+        
+    try:
+        token_b64, sig = token_recebido.split('.')
+        payload = json.loads(base64.urlsafe_b64decode(token_b64).decode())
+        
+        # 1. Checa Assinatura
+        if gerar_assinatura(payload) != sig:
+            return jsonify({"valid": False, "error": "Assinatura inválida"})
+            
+        # 2. Checa Expiração (5 min)
+        if time.time() > payload.get('expires_at', 0):
+            return jsonify({"valid": False, "error": "Token expirado"})
+            
+        # 3. Checa validade explícita
+        if not payload.get('valid'):
+             return jsonify({"valid": False, "error": "Token inválido"})
+
+        return jsonify({"valid": True, "ts": payload.get('ts_passed')})
+        
+    except Exception as e:
+        return jsonify({"valid": False, "error": str(e)})
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
