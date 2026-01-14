@@ -14,9 +14,9 @@ import math
 app = Flask(__name__)
 CORS(app)
 
-SECRET_KEY = b"SufdhzdfSupefzdta_fzfd23"
+SECRET_KEY = b"SuaChaveSuperSecreta_MudeIsso123"
 
-# --- FRONTEND (JS AJUSTADO PARA NIX-PTCHA) ---
+# --- FRONTEND (NIX-PTCHA) ---
 JS_TEMPLATE = """
 (function() {
     const API_BASE = "__API_URL__";
@@ -97,7 +97,6 @@ JS_TEMPLATE = """
     });
 
     function initCaptcha() {
-        // AGORA PROCURA PELA CLASSE .nix-ptcha
         const containers = document.querySelectorAll('.nix-ptcha');
         if (containers.length === 0) return;
 
@@ -117,7 +116,8 @@ JS_TEMPLATE = """
                         <div class="nix-body">
                             <div class="loader" id="nix-loader"></div>
                             <img id="nix-img" class="nix-img" alt="" style="display:none;" />
-                            <p id="nix-instrucao" style="font-size:14px; margin:0 0 10px 0; color:#374151; font-weight:500;">...</p>
+                            
+                            <p id="nix-instrucao" style="font-size:15px; margin:0 0 10px 0; color:#111827; font-weight:700;">...</p>
                             
                             <input type="text" id="nix-input" class="nix-input" placeholder="RESPOSTA" autocomplete="off">
                             <button id="nix-btn" class="nix-btn">VERIFICAR</button>
@@ -155,13 +155,7 @@ JS_TEMPLATE = """
                     imgEl.style.display = 'block';
                     imgEl.src = "data:image/png;base64," + data.image;
                     
-                    if(data.type === 'math') {
-                        instrucao.innerText = "Resolva o cálculo:";
-                        inputField.placeholder = "RESULTADO";
-                    } else {
-                        instrucao.innerText = "Digite os caracteres:";
-                        inputField.placeholder = "TEXTO";
-                    }
+                    instrucao.innerText = data.instruction;
                     
                     currentToken = data.token;
                     inputField.value = "";
@@ -196,7 +190,7 @@ JS_TEMPLATE = """
                         inputBtn.innerText = "VERIFICAR";
                         inputField.value = "";
                         inputField.focus();
-                        checkbox.click(); // Recarrega novo desafio
+                        checkbox.click(); 
                     }
                 } catch (e) { 
                     msg.innerText = "Erro ao validar.";
@@ -214,16 +208,14 @@ JS_TEMPLATE = """
 })();
 """
 
-# --- BACKEND (MÉTODO ZOOM DIGITAL - SEM FONTES EXTERNAS) ---
+# --- BACKEND (ZOOM DIGITAL) ---
 
 def gerar_assinatura(dados):
     msg = json.dumps(dados, sort_keys=True).encode()
     return hmac.new(SECRET_KEY, msg, hashlib.sha256).hexdigest()
 
 def criar_texto_ampliado(texto):
-    """
-    Desenha texto pequeno com fonte padrão e amplia (Zoom Digital).
-    """
+    """Zoom Digital para não depender de fontes externas"""
     w_small = len(texto) * 10 + 20
     h_small = 20
     img_small = Image.new('RGBA', (w_small, h_small), (0,0,0,0))
@@ -239,29 +231,25 @@ def criar_texto_ampliado(texto):
     aspect_ratio = img_small.width / img_small.height
     target_width = int(target_height * aspect_ratio)
     
-    # NEAREST para manter o estilo pixelado nítido
+    # NEAREST mantém o visual "pixel art" nítido
     img_large = img_small.resize((target_width, target_height), resample=Image.NEAREST)
     return img_large
 
 def aplicar_distorcao_onda(imagem):
     width, height = imagem.size
     nova_imagem = Image.new("RGBA", (width, height), (0,0,0,0))
-    
     amplitude = random.randint(4, 7)
     frequencia = random.uniform(0.04, 0.06)
-    
     for x in range(width):
         offset_y = int(amplitude * math.sin(2 * math.pi * frequencia * x))
         dest_y = max(0, offset_y)
         coluna = imagem.crop((x, 0, x + 1, height))
         nova_imagem.paste(coluna, (x, dest_y))
-        
     return nova_imagem
 
 def criar_imagem_distorcida(texto):
     width, height = 520, 180 
     background = Image.new('RGB', (width, height), color=(245, 245, 250))
-    draw_bg = ImageDraw.Draw(background)
     
     texto_img = criar_texto_ampliado(texto)
     txt_layer = Image.new('RGBA', (width, height), (0,0,0,0))
@@ -271,22 +259,17 @@ def criar_imagem_distorcida(texto):
     
     txt_layer.paste(texto_img, (pos_x, pos_y))
     txt_layer = aplicar_distorcao_onda(txt_layer)
-    
     final_img = Image.alpha_composite(background.convert('RGBA'), txt_layer)
     
     draw_final = ImageDraw.Draw(final_img)
-    
     # Ruído de fundo (linhas)
     for _ in range(15):
-        x1, y1 = random.randint(0, width), random.randint(0, height)
-        x2, y2 = random.randint(0, width), random.randint(0, height)
-        cor = (random.randint(150, 200), random.randint(150, 200), random.randint(150, 200))
-        draw_final.line([(x1, y1), (x2, y2)], fill=cor, width=2)
-        
+        draw_final.line([(random.randint(0, width), random.randint(0, height)), 
+                         (random.randint(0, width), random.randint(0, height))], 
+                        fill=(180,180,180), width=2)
     # Ruído frontal (pontos)
     for _ in range(400):
-        xy = (random.randint(0, width), random.randint(0, height))
-        draw_final.point(xy, fill=(100, 100, 100))
+        draw_final.point((random.randint(0, width), random.randint(0, height)), fill=(100, 100, 100))
         
     buffer = io.BytesIO()
     final_img.save(buffer, format="PNG")
@@ -302,45 +285,75 @@ def servir_script():
 
 @app.route('/get-challenge', methods=['GET'])
 def get_challenge():
-    tipos = ['num', 'char', 'mix', 'math']
+    # TIPOS DE DESAFIO (AGORA INCLUINDO MAIOR/MENOR)
+    tipos = ['normal', 'math', 'max_min']
     escolha = random.choice(tipos)
     
     texto_img = ""
     resposta = ""
+    instrucao = ""
     
+    # 1. MATEMÁTICA
     if escolha == 'math':
         op = random.choice(['+', '-', '*'])
         if op == '+':
             a, b = random.randint(1, 9), random.randint(1, 9)
-            texto_img = f"{a}+{b}=?"
+            texto_img = f"{a} + {b} = ?"
             resposta = str(a + b)
         elif op == '-':
             a, b = random.randint(5, 15), random.randint(1, 5)
-            texto_img = f"{a}-{b}=?"
+            texto_img = f"{a} - {b} = ?"
             resposta = str(a - b)
         elif op == '*':
             a, b = random.randint(2, 6), random.randint(2, 4)
-            texto_img = f"{a}x{b}=?"
+            texto_img = f"{a} x {b} = ?"
             resposta = str(a * b)
-    else:
-        if escolha == 'num': pool = "23456789"
-        elif escolha == 'char': pool = "ACEFHJKLMNPRTXY"
-        else: pool = "ACEFHKMNP234579"
-        texto_img = "".join(random.choices(pool, k=5))
-        resposta = texto_img
+        instrucao = "Resolva o cálculo abaixo:"
 
+    # 2. NOVO: MAIOR OU MENOR NÚMERO
+    elif escolha == 'max_min':
+        # Gera 3 números distintos entre 1 e 50
+        nums = random.sample(range(1, 50), 3)
+        
+        # Decide aleatoriamente se pede o MAIOR ou o MENOR
+        if random.random() < 0.5:
+            # Pede o Maior
+            target = max(nums)
+            instrucao = "Digite o MAIOR número:"
+        else:
+            # Pede o Menor
+            target = min(nums)
+            instrucao = "Digite o MENOR número:"
+        
+        # Formata com espaços extras para ficar visível na imagem
+        texto_img = f"{nums[0]}   {nums[1]}   {nums[2]}"
+        resposta = str(target)
+
+    # 3. TEXTO NORMAL (PADRÃO)
+    else:
+        texto_img = "".join(random.choices("ACEFHKMNP234579", k=5))
+        resposta = texto_img
+        instrucao = "Digite os caracteres da imagem:"
+
+    # Gera a imagem
     imagem_b64 = criar_imagem_distorcida(texto_img)
     
     dados = { "ans": resposta, "ts": time.time(), "salt": random.randint(1, 9999) }
     token = f"{base64.urlsafe_b64encode(json.dumps(dados).encode()).decode()}.{gerar_assinatura(dados)}"
     
-    return jsonify({ "image": imagem_b64, "token": token, "type": escolha })
+    return jsonify({ 
+        "image": imagem_b64, 
+        "token": token, 
+        "type": escolha,
+        "instruction": instrucao 
+    })
 
 @app.route('/verify', methods=['POST'])
 def verify():
     data = request.json
     try:
         user_ans = data.get('answer', '').strip().upper()
+        # Remove espaços (importante para evitar erro se user digitar " 10 ")
         user_ans = user_ans.replace(" ", "")
         
         token_b64, sig = data.get('token', '').split('.')
@@ -352,7 +365,7 @@ def verify():
         
         if user_ans == dados['ans'].upper(): return jsonify({"success": True})
         
-        return jsonify({"success": True})
+        return jsonify({"success": False})
     except:
         return jsonify({"success": False})
 
