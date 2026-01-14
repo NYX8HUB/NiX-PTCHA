@@ -14,9 +14,18 @@ import math
 app = Flask(__name__)
 CORS(app)
 
-SECRET_KEY = b"SuaChaveSuperSecreta_MudeIsso123"
+SECRET_KEY = b"SuaaegrgQ2W4Q3ER435342"
 
-# --- FRONTEND (AGORA COM SUPORTE A BOTÕES) ---
+# --- ROTAS NOVAS ---
+@app.route("/")
+def sobre():
+    return render_template("main.html")
+
+@app.route("/demo")
+def demo():
+    return render_template("main.html")
+
+# --- FRONTEND (NIX-PTCHA COM BOTÃO FECHAR) ---
 JS_TEMPLATE = """
 (function() {
     const API_BASE = "__API_URL__";
@@ -48,7 +57,20 @@ JS_TEMPLATE = """
             z-index: 10000; display: none; overflow: hidden;
             font-family: 'Segoe UI', Roboto, sans-serif; padding-bottom: 20px;
         }
-        .nix-header { background: #4f46e5; color: white; padding: 14px; font-size: 15px; font-weight: 600; text-align: center; }
+        .nix-header { 
+            background: #4f46e5; color: white; padding: 14px; 
+            font-size: 15px; font-weight: 600; text-align: center;
+            position: relative; /* Para posicionar o X */
+        }
+        
+        /* ESTILO DO BOTÃO FECHAR (X) */
+        .nix-close-btn {
+            position: absolute; top: 0; right: 0;
+            padding: 14px 20px; cursor: pointer;
+            font-size: 20px; line-height: 1; color: rgba(255,255,255,0.8);
+        }
+        .nix-close-btn:hover { color: #fff; background: rgba(0,0,0,0.1); }
+
         .nix-body { padding: 20px; text-align: center; }
         .nix-img { display: block; margin: 0 auto 15px auto; border-radius: 8px; border: 1px solid #e5e7eb; width: 100%; height: auto; box-shadow: inset 0 0 10px rgba(0,0,0,0.05); }
         
@@ -58,7 +80,6 @@ JS_TEMPLATE = """
         .nix-btn { background: #4f46e5; color: white; border: none; padding: 12px 0; cursor: pointer; border-radius: 8px; font-weight: 700; width: 100%; font-size: 15px; transition: background 0.2s; }
         .nix-btn:hover { background: #4338ca; }
 
-        /* Estilo para os botões de opção (Cores) */
         .nix-options-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 10px; }
         .nix-opt-btn { 
             padding: 15px 5px; border: 1px solid #d1d5db; background: #f9fafb; 
@@ -94,7 +115,10 @@ JS_TEMPLATE = """
                     </div>
                     
                     <div class="nix-modal" id="nix-modal">
-                        <div class="nix-header">Verificação de Segurança</div>
+                        <div class="nix-header">
+                            Verificação de Segurança
+                            <span class="nix-close-btn" id="nix-close">&times;</span>
+                        </div>
                         <div class="nix-body">
                             <div class="loader" id="nix-loader"></div>
                             <img id="nix-img" class="nix-img" alt="" style="display:none;" />
@@ -116,13 +140,11 @@ JS_TEMPLATE = """
 
             const checkbox = box.querySelector('#nix-box');
             const modal = box.querySelector('#nix-modal');
+            const closeBtn = box.querySelector('#nix-close'); // SELECIONA O BOTÃO X
             const imgEl = box.querySelector('#nix-img');
             const loader = box.querySelector('#nix-loader');
-            
-            // Containers
             const textContainer = box.querySelector('#nix-text-container');
             const optionsContainer = box.querySelector('#nix-options-container');
-            
             const inputBtn = box.querySelector('#nix-btn');
             const inputField = box.querySelector('#nix-input');
             const msg = box.querySelector('#nix-msg');
@@ -130,7 +152,15 @@ JS_TEMPLATE = """
             const hiddenInput = box.querySelector('#nix-token');
             let currentToken = "";
 
-            // Função para enviar resposta
+            // LÓGICA DO BOTÃO FECHAR
+            closeBtn.addEventListener('click', (e) => {
+                e.stopPropagation(); // Impede que o clique passe para o checkbox
+                modal.style.display = 'none';
+                // Reseta estado se quiser
+                msg.innerText = "";
+                inputField.value = "";
+            });
+
             async function submitAnswer(answer) {
                 msg.innerText = "Verificando...";
                 try {
@@ -151,7 +181,6 @@ JS_TEMPLATE = """
                         hiddenInput.value = resp.verification_token; 
                     } else {
                         msg.innerText = "Incorreto. Tente novamente.";
-                        // Reinicia o desafio após erro
                         setTimeout(() => {
                             msg.innerText = "";
                             checkbox.click(); 
@@ -182,12 +211,9 @@ JS_TEMPLATE = """
                     instrucao.innerText = data.instruction;
                     currentToken = data.token;
                     
-                    // LÓGICA HÍBRIDA: Botões ou Texto?
                     if (data.options && data.options.length > 0) {
-                        // MODO BOTÕES (Cores)
-                        optionsContainer.innerHTML = ''; // Limpa botões antigos
+                        optionsContainer.innerHTML = '';
                         optionsContainer.style.display = 'grid';
-                        
                         data.options.forEach(opt => {
                             const btn = document.createElement('button');
                             btn.className = 'nix-opt-btn';
@@ -198,14 +224,11 @@ JS_TEMPLATE = """
                             };
                             optionsContainer.appendChild(btn);
                         });
-
                     } else {
-                        // MODO TEXTO (Matemática, Normal)
                         textContainer.style.display = 'block';
                         inputField.value = "";
                         inputField.focus();
                     }
-                    
                 } catch(e) { msg.innerText = "Erro ao conectar."; }
             });
 
@@ -224,24 +247,20 @@ JS_TEMPLATE = """
 })();
 """
 
-# --- BACKEND ---
-
+# --- BACKEND LOGIC ---
 def gerar_assinatura(dados):
     msg = json.dumps(dados, sort_keys=True).encode()
     return hmac.new(SECRET_KEY, msg, hashlib.sha256).hexdigest()
 
 def criar_texto_ampliado(texto):
-    """Zoom Digital para Texto"""
     w_small = len(texto) * 10 + 20
     h_small = 20
     img_small = Image.new('RGBA', (w_small, h_small), (0,0,0,0))
     draw_small = ImageDraw.Draw(img_small)
     font_padrao = ImageFont.load_default()
     draw_small.text((5, 2), texto, font=font_padrao, fill=(0,0,0,255))
-    
     bbox = img_small.getbbox()
     if bbox: img_small = img_small.crop(bbox)
-        
     target_height = 90
     aspect_ratio = img_small.width / img_small.height
     target_width = int(target_height * aspect_ratio)
@@ -249,27 +268,19 @@ def criar_texto_ampliado(texto):
     return img_large
 
 def criar_imagem_cor(cor_rgb):
-    """Cria uma imagem de uma mancha de cor (para o desafio de botões)"""
     width, height = 520, 180
-    # Fundo levemente colorido
     background = Image.new('RGB', (width, height), color=(245, 245, 250))
     draw = ImageDraw.Draw(background)
-    
-    # Desenha um "Blob" da cor alvo
     cx, cy = width // 2, height // 2
     r = 70
     draw.ellipse((cx-r, cy-r, cx+r, cy+r), fill=cor_rgb)
-    
-    # Adiciona ruído na cor para não ser hexadecimal exato (anti-bot simples)
     for _ in range(500):
         ox = random.randint(cx-r, cx+r)
         oy = random.randint(cy-r, cy+r)
-        # Varia levemente a cor
         noise_r = max(0, min(255, cor_rgb[0] + random.randint(-20, 20)))
         noise_g = max(0, min(255, cor_rgb[1] + random.randint(-20, 20)))
         noise_b = max(0, min(255, cor_rgb[2] + random.randint(-20, 20)))
         draw.point((ox, oy), fill=(noise_r, noise_g, noise_b))
-
     buffer = io.BytesIO()
     background.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode()
@@ -307,8 +318,6 @@ def criar_imagem_distorcida(texto):
     final_img.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode()
 
-# --- ROTAS ---
-
 @app.route('/api.js')
 def servir_script():
     api_url = request.url_root.rstrip('/')
@@ -317,65 +326,44 @@ def servir_script():
 
 @app.route('/get-challenge', methods=['GET'])
 def get_challenge():
-    # TIPOS DE DESAFIO
     tipos = ['math_word', 'color_match', 'normal']
     escolha = random.choice(tipos)
     
     texto_img = ""
     resposta = ""
     instrucao = ""
-    options = [] # Usado apenas para o desafio de botões
+    options = []
     imagem_b64 = ""
     
-    # 1. MATEMÁTICA POR EXTENSO
     if escolha == 'math_word':
-        # Mapa de números para texto
         nums_map = {1: "UM", 2: "DOIS", 3: "TRES", 4: "QUATRO", 5: "CINCO"}
         val_a = random.randint(1, 5)
         val_b = random.randint(1, 4)
-        
-        # Decide aleatoriamente qual lado fica por extenso
-        if random.random() < 0.5:
-            expr_str = f"{nums_map[val_a]} + {val_b}"
-        else:
-            expr_str = f"{val_a} + {nums_map[val_b]}"
-            
+        if random.random() < 0.5: expr_str = f"{nums_map[val_a]} + {val_b}"
+        else: expr_str = f"{val_a} + {nums_map[val_b]}"
         texto_img = f"{expr_str} = ?"
         resposta = str(val_a + val_b)
         instrucao = "Resolva a soma (digite o número):"
         imagem_b64 = criar_imagem_distorcida(texto_img)
 
-    # 2. BOTÕES DE COR (DESAFIO VISUAL)
     elif escolha == 'color_match':
-        # Definição das cores
         cores_dict = {
-            'VERMELHO': (200, 40, 40),
-            'VERDE': (40, 200, 40),
-            'AZUL': (40, 40, 200),
-            'AMARELO': (220, 220, 40),
-            'ROXO': (150, 40, 200),
-            'LARANJA': (220, 120, 40)
+            'VERMELHO': (200, 40, 40), 'VERDE': (40, 200, 40), 'AZUL': (40, 40, 200),
+            'AMARELO': (220, 220, 40), 'ROXO': (150, 40, 200), 'LARANJA': (220, 120, 40)
         }
-        
         nomes_cores = list(cores_dict.keys())
         cor_correta_nome = random.choice(nomes_cores)
         cor_rgb = cores_dict[cor_correta_nome]
-        
-        # Prepara as opções (1 Correta + 2 Erradas)
         opcoes = [cor_correta_nome]
         while len(opcoes) < 3:
             errada = random.choice(nomes_cores)
-            if errada not in opcoes:
-                opcoes.append(errada)
-        
-        random.shuffle(opcoes) # Embaralha os botões
-        
+            if errada not in opcoes: opcoes.append(errada)
+        random.shuffle(opcoes)
         resposta = cor_correta_nome
         instrucao = "Qual a cor da figura?"
-        options = opcoes # Isso ativa o modo de botões no Frontend
+        options = opcoes
         imagem_b64 = criar_imagem_cor(cor_rgb)
 
-    # 3. NORMAL
     else:
         texto_img = "".join(random.choices("ACEFHKMNP234579", k=5))
         resposta = texto_img
@@ -385,73 +373,37 @@ def get_challenge():
     dados = { "ans": resposta, "ts": time.time(), "salt": random.randint(1, 9999) }
     token = f"{base64.urlsafe_b64encode(json.dumps(dados).encode()).decode()}.{gerar_assinatura(dados)}"
     
-    return jsonify({ 
-        "image": imagem_b64, 
-        "token": token, 
-        "type": escolha,
-        "instruction": instrucao,
-        "options": options 
-    })
+    return jsonify({ "image": imagem_b64, "token": token, "type": escolha, "instruction": instrucao, "options": options })
 
 @app.route('/verify', methods=['POST'])
 def verify():
     data = request.json
     try:
         user_ans = data.get('answer', '').strip().upper()
-        user_ans = user_ans.replace(" ", "") # Remove espaços
-        
+        user_ans = user_ans.replace(" ", "")
         token_b64, sig = data.get('token', '').split('.')
         dados = json.loads(base64.urlsafe_b64decode(token_b64).decode())
-        
         if gerar_assinatura(dados) != sig: return jsonify({"success": False})
         if time.time() - dados['ts'] > 300: return jsonify({"success": False})
-        
         if user_ans == dados['ans'].upper():
-            payload_sucesso = {
-                "valid": True,
-                "ts_passed": time.time(),
-                "expires_at": time.time() + 300,
-                "nonce": random.randint(100000, 999999)
-            }
+            payload_sucesso = { "valid": True, "ts_passed": time.time(), "expires_at": time.time() + 300, "nonce": random.randint(100000, 999999) }
             token_final = f"{base64.urlsafe_b64encode(json.dumps(payload_sucesso).encode()).decode()}.{gerar_assinatura(payload_sucesso)}"
             return jsonify({ "success": True, "verification_token": token_final })
-        
         return jsonify({"success": False})
-    except:
-        return jsonify({"success": False})
+    except: return jsonify({"success": False})
 
 @app.route('/validate', methods=['GET', 'POST'])
 def validate_token():
-    token_recebido = None
-    if request.method == 'GET':
-        token_recebido = request.args.get('token')
-    else:
-        data = request.get_json(silent=True)
-        if data: token_recebido = data.get('token')
-        else: token_recebido = request.form.get('token')
-
-    if not token_recebido or "." not in token_recebido:
-        return jsonify({"valid": False, "error": "Formato inválido"})
-        
+    token_recebido = request.args.get('token') if request.method == 'GET' else (request.get_json(silent=True) or {}).get('token', request.form.get('token'))
+    if not token_recebido or "." not in token_recebido: return jsonify({"valid": False, "error": "Formato inválido"})
     try:
         token_b64, sig = token_recebido.split('.')
         payload = json.loads(base64.urlsafe_b64decode(token_b64).decode())
-        
         if gerar_assinatura(payload) != sig: return jsonify({"valid": False, "error": "Assinatura inválida"})
         if time.time() > payload.get('expires_at', 0): return jsonify({"valid": False, "error": "Token expirado"})
         if not payload.get('valid'): return jsonify({"valid": False, "error": "Token inválido"})
-
         return jsonify({"valid": True, "ts": payload.get('ts_passed')})
-    except Exception as e:
-        return jsonify({"valid": False, "error": str(e)})
-
-@app.route("/")
-def sobre():
-    return render_template("main.html")
-
-@app.route("/demo")
-def demo():
-    return render_template("main.html")
+    except Exception as e: return jsonify({"valid": False, "error": str(e)})
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
