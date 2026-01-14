@@ -283,7 +283,7 @@ def criar_imagem_distorcida(texto):
     txt_layer = Image.new('RGBA', (width, height), (255, 255, 255, 0))
     
     # Carregar Fonte Grande (Tamanho 110)
-    font = get_best_font(110)
+    font = get_best_font(20)
 
     # Cálculo centralização (ajustado para fonte 110)
     # Estimativa média de largura por caractere ~60px a 70px
