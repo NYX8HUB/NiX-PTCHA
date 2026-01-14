@@ -10,14 +10,41 @@ import json
 import base64
 import os
 import math
-import platform
+import requests # <--- Necessário para baixar a fonte
 
 app = Flask(__name__)
 CORS(app)
 
 SECRET_KEY = b"SuaChaveSuperSecreta_MudeIsso123"
 
-# --- FRONTEND (CSS Ajustado para imagem Gigante) ---
+# --- CONFIGURAÇÃO DA FONTE AUTOMÁTICA (VERCEL FRIENDLY) ---
+FONT_URL = "https://github.com/google/fonts/raw/main/apache/robotoslab/RobotoSlab-Bold.ttf"
+# Na Vercel, só podemos escrever em /tmp
+FONT_PATH = "/tmp/robotoslab-bold.ttf" 
+
+def carregar_fonte(tamanho):
+    """
+    Tenta carregar a fonte do /tmp. Se não existir, baixa da internet.
+    """
+    # 1. Se o arquivo ainda não existe no /tmp, baixa ele
+    if not os.path.exists(FONT_PATH):
+        print("Baixando fonte para /tmp...")
+        try:
+            response = requests.get(FONT_URL, timeout=5)
+            with open(FONT_PATH, 'wb') as f:
+                f.write(response.content)
+            print("Fonte baixada com sucesso!")
+        except Exception as e:
+            print(f"Erro ao baixar fonte: {e}")
+            return ImageFont.load_default() # Fallback triste
+
+    # 2. Carrega a fonte do arquivo local
+    try:
+        return ImageFont.truetype(FONT_PATH, tamanho)
+    except:
+        return ImageFont.load_default()
+
+# --- FRONTEND (Mesmo de antes) ---
 JS_TEMPLATE = """
 (function() {
     const API_BASE = "__API_URL__";
@@ -47,7 +74,7 @@ JS_TEMPLATE = """
         .captcha-modal {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -20px);
             background: white; 
-            width: 450px; /* Aumentado para caber a imagem nova */
+            width: 450px; 
             max-width: 90vw;
             border-radius: 12px;
             box-shadow: 0 20px 40px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.05);
@@ -157,7 +184,7 @@ JS_TEMPLATE = """
                     
                     if(data.type === 'math') {
                         instrucao.innerText = "Resolva o cálculo:";
-                        inputField.placeholder = "Resultado";
+                        inputField.placeholder = "RESULTADO";
                     } else {
                         instrucao.innerText = "Digite os caracteres da imagem:";
                         inputField.placeholder = "TEXTO";
@@ -220,49 +247,11 @@ def gerar_assinatura(dados):
     msg = json.dumps(dados, sort_keys=True).encode()
     return hmac.new(SECRET_KEY, msg, hashlib.sha256).hexdigest()
 
-def get_best_font(size):
-    """
-    Tenta carregar fonte e avisa no terminal qual foi carregada.
-    """
-    diretorio_atual = os.path.dirname(os.path.abspath(__file__))
-    
-    # LISTA DE FONTES PARA TENTAR (Prioridade)
-    fontes_para_tentar = [
-        # 1. Arquivo na mesma pasta (Ideal)
-        os.path.join(diretorio_atual, 'font.ttf'), 
-        
-        # 2. Windows (Caminhos comuns)
-        "C:\\Windows\\Fonts\\arial.ttf",
-        "C:\\Windows\\Fonts\\segoeui.ttf",
-        "C:\\Windows\\Fonts\\calibri.ttf",
-        
-        # 3. Linux (Caminhos comuns)
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/TTF/Arial.ttf"
-    ]
-
-    for fonte_path in fontes_para_tentar:
-        try:
-            # Tenta carregar
-            loaded_font = ImageFont.truetype(fonte_path, size)
-            return loaded_font
-        except OSError:
-            # Se falhar (arquivo não existe), tenta o próximo
-            continue
-            
-    # SE CHEGOU AQUI, DEU RUIM
-    print("---------------------------------------------------")
-    print("AVISO: NENHUMA FONTE ENCONTRADA. USANDO PADRÃO.")
-    print("O TEXTO FICARÁ PEQUENO. COPIE UM ARQUIVO .TTF PARA A PASTA.")
-    print("---------------------------------------------------")
-    return ImageFont.load_default()
-
 def aplicar_distorcao_onda(imagem):
     width, height = imagem.size
     nova_imagem = Image.new("RGBA", (width, height), (0,0,0,0))
     
-    amplitude = random.randint(5, 9) 
+    amplitude = random.randint(5, 8) 
     frequencia = random.uniform(0.03, 0.05)
     
     for x in range(width):
@@ -274,39 +263,37 @@ def aplicar_distorcao_onda(imagem):
     return nova_imagem
 
 def criar_imagem_distorcida(texto):
-    # 1. Tamanho da imagem (Largo e Alto)
     width, height = 520, 180 
     
-    background = Image.new('RGB', (width, height), color=(245, 245, 245))
+    background = Image.new('RGB', (width, height), color=(250, 250, 250))
     draw_bg = ImageDraw.Draw(background)
     
-    # Ruído de fundo
-    for _ in range(40):
+    # Linhas de ruído
+    for _ in range(25): 
         x1, y1 = random.randint(0, width), random.randint(0, height)
         x2, y2 = random.randint(0, width), random.randint(0, height)
         cor = (random.randint(180, 220), random.randint(180, 220), random.randint(180, 220))
-        draw_bg.line([(x1, y1), (x2, y2)], fill=cor, width=3)
+        draw_bg.line([(x1, y1), (x2, y2)], fill=cor, width=2)
     
     txt_layer = Image.new('RGBA', (width, height), (255, 255, 255, 0))
     
-    # --- AQUI É O TAMANHO DA FONTE (110) ---
-    font = get_best_font(110)
+    # --- AQUI ESTÁ A MÁGICA ---
+    # Chama a função que baixa a fonte automaticamente para o /tmp
+    font = carregar_fonte(95) # Fonte tamanho 95 (Roboto Slab é grande)
 
-    # Cálculo para centralizar
-    estimativa_largura = len(texto) * 75
+    estimativa_largura = len(texto) * 65
     start_x = (width - estimativa_largura) / 2
-    curr_x = start_x if start_x > 0 else 10
+    curr_x = start_x if start_x > 0 else 20
     
     for char in texto:
-        char_img = Image.new('RGBA', (150, 150), (0,0,0,0))
+        char_img = Image.new('RGBA', (150, 180), (0,0,0,0)) 
         char_draw = ImageDraw.Draw(char_img)
         
-        cor = (random.randint(0, 80), random.randint(0, 80), random.randint(0, 120))
+        cor = (random.randint(20, 80), random.randint(20, 80), random.randint(20, 100))
         
-        # Desenha a letra
-        char_draw.text((35, 10), char, font=font, fill=cor)
+        # Ajuste de posição vertical para Roboto Slab
+        char_draw.text((30, 20), char, font=font, fill=cor)
         
-        # Rotaciona
         rotacao = random.randint(-20, 20)
         char_rot = char_img.rotate(rotacao, expand=1, resample=Image.BICUBIC)
         
@@ -318,11 +305,10 @@ def criar_imagem_distorcida(texto):
     txt_layer_distorted = aplicar_distorcao_onda(txt_layer)
     final_img = Image.alpha_composite(background.convert('RGBA'), txt_layer_distorted)
     
-    # Ruído frontal
     draw_final = ImageDraw.Draw(final_img)
-    for _ in range(500):
+    for _ in range(300):
         xy = (random.randint(0, width), random.randint(0, height))
-        draw_final.point(xy, fill=(100, 100, 100))
+        draw_final.point(xy, fill=(120, 120, 120))
         
     buffer = io.BytesIO()
     final_img.save(buffer, format="PNG")
@@ -347,17 +333,16 @@ def get_challenge():
     if escolha == 'math':
         op = random.choice(['+', '-', '*'])
         if op == '+':
-            a, b = random.randint(1, 15), random.randint(1, 15)
-            texto_img = f"{a} + {b}"
+            a, b = random.randint(1, 9), random.randint(1, 9)
+            texto_img = f"{a}+{b}"
             resposta = str(a + b)
         elif op == '-':
-            a, b = random.randint(5, 20), random.randint(1, 10)
-            if a < b: a, b = b, a 
-            texto_img = f"{a} - {b}"
+            a, b = random.randint(5, 15), random.randint(1, 5)
+            texto_img = f"{a}-{b}"
             resposta = str(a - b)
         elif op == '*':
-            a, b = random.randint(2, 9), random.randint(2, 5)
-            texto_img = f"{a} x {b}"
+            a, b = random.randint(2, 6), random.randint(2, 4)
+            texto_img = f"{a}x{b}"
             resposta = str(a * b)
     else:
         if escolha == 'num': pool = "23456789"
