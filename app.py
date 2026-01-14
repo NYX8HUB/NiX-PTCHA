@@ -1,6 +1,6 @@
 from flask import Flask, Response, request, jsonify
 from flask_cors import CORS
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont
 import io
 import time
 import hashlib
@@ -214,45 +214,54 @@ JS_TEMPLATE = """
 })();
 """
 
-# --- BACKEND (DISTORÇÃO, FONTE GIGANTE E NOVOS DESAFIOS) ---
+# --- BACKEND (LÓGICA DO CAPTCHA) ---
 
 def gerar_assinatura(dados):
     msg = json.dumps(dados, sort_keys=True).encode()
     return hmac.new(SECRET_KEY, msg, hashlib.sha256).hexdigest()
 
 def get_best_font(size):
-    """Tenta carregar uma fonte TTF do sistema se font.ttf não existir"""
-    # 1. Tenta fonte local
-    try:
-        diretorio_atual = os.path.dirname(os.path.abspath(__file__))
-        caminho_fonte = os.path.join(diretorio_atual, 'font.ttf')
-        return ImageFont.truetype(caminho_fonte, size)
-    except:
-        pass
+    """
+    Tenta carregar fonte e avisa no terminal qual foi carregada.
+    """
+    diretorio_atual = os.path.dirname(os.path.abspath(__file__))
     
-    # 2. Tenta fontes do sistema (Linux/Windows)
-    system_fonts = [
-        "arial.ttf", "segoeui.ttf", "calibri.ttf", # Windows
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", # Linux Comum
+    # LISTA DE FONTES PARA TENTAR (Prioridade)
+    fontes_para_tentar = [
+        # 1. Arquivo na mesma pasta (Ideal)
+        os.path.join(diretorio_atual, 'font.ttf'), 
+        
+        # 2. Windows (Caminhos comuns)
+        "C:\\Windows\\Fonts\\arial.ttf",
+        "C:\\Windows\\Fonts\\segoeui.ttf",
+        "C:\\Windows\\Fonts\\calibri.ttf",
+        
+        # 3. Linux (Caminhos comuns)
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "Arial.ttf" # MacOS as vezes
+        "/usr/share/fonts/TTF/Arial.ttf"
     ]
-    
-    for f in system_fonts:
+
+    for fonte_path in fontes_para_tentar:
         try:
-            return ImageFont.truetype(f, size)
-        except:
+            # Tenta carregar
+            loaded_font = ImageFont.truetype(fonte_path, size)
+            return loaded_font
+        except OSError:
+            # Se falhar (arquivo não existe), tenta o próximo
             continue
             
-    # 3. Fallback (vai ficar pequeno, mas funciona)
-    print("AVISO: Nenhuma fonte TTF encontrada. Usando padrão (pequena).")
+    # SE CHEGOU AQUI, DEU RUIM
+    print("---------------------------------------------------")
+    print("AVISO: NENHUMA FONTE ENCONTRADA. USANDO PADRÃO.")
+    print("O TEXTO FICARÁ PEQUENO. COPIE UM ARQUIVO .TTF PARA A PASTA.")
+    print("---------------------------------------------------")
     return ImageFont.load_default()
 
 def aplicar_distorcao_onda(imagem):
     width, height = imagem.size
     nova_imagem = Image.new("RGBA", (width, height), (0,0,0,0))
     
-    # Aumentei a amplitude pois a imagem agora é maior
     amplitude = random.randint(5, 9) 
     frequencia = random.uniform(0.03, 0.05)
     
@@ -265,67 +274,56 @@ def aplicar_distorcao_onda(imagem):
     return nova_imagem
 
 def criar_imagem_distorcida(texto):
-    # 1. Canvas GIGANTE para caber a fonte dobrada
+    # 1. Tamanho da imagem (Largo e Alto)
     width, height = 520, 180 
     
-    # Fundo texturizado claro
     background = Image.new('RGB', (width, height), color=(245, 245, 245))
     draw_bg = ImageDraw.Draw(background)
     
-    # Ruído de fundo mais grosso
+    # Ruído de fundo
     for _ in range(40):
         x1, y1 = random.randint(0, width), random.randint(0, height)
         x2, y2 = random.randint(0, width), random.randint(0, height)
         cor = (random.randint(180, 220), random.randint(180, 220), random.randint(180, 220))
         draw_bg.line([(x1, y1), (x2, y2)], fill=cor, width=3)
     
-    # Camada de texto transparente
     txt_layer = Image.new('RGBA', (width, height), (255, 255, 255, 0))
     
-    # Carregar Fonte Grande (Tamanho 110)
-    font = get_best_font(20)
+    # --- AQUI É O TAMANHO DA FONTE (110) ---
+    font = get_best_font(110)
 
-    # Cálculo centralização (ajustado para fonte 110)
-    # Estimativa média de largura por caractere ~60px a 70px
+    # Cálculo para centralizar
     estimativa_largura = len(texto) * 75
     start_x = (width - estimativa_largura) / 2
-    
-    curr_x = start_x if start_x > 0 else 10 # Margem de segurança
+    curr_x = start_x if start_x > 0 else 10
     
     for char in texto:
-        # Imagem temporária para o caractere (maior para permitir rotação)
         char_img = Image.new('RGBA', (150, 150), (0,0,0,0))
         char_draw = ImageDraw.Draw(char_img)
         
-        # Cores aleatórias fortes
         cor = (random.randint(0, 80), random.randint(0, 80), random.randint(0, 120))
         
-        # Desenha caractere
+        # Desenha a letra
         char_draw.text((35, 10), char, font=font, fill=cor)
         
-        # Rotação
+        # Rotaciona
         rotacao = random.randint(-20, 20)
         char_rot = char_img.rotate(rotacao, expand=1, resample=Image.BICUBIC)
         
-        # Offset Y aleatório para as letras "dançarem"
         offset_y = random.randint(10, 40)
         
         txt_layer.paste(char_rot, (int(curr_x), offset_y), char_rot)
-        curr_x += 75 # Espaçamento maior
+        curr_x += 75 
         
-    # Aplica Onda
     txt_layer_distorted = aplicar_distorcao_onda(txt_layer)
-    
-    # Compõe final
     final_img = Image.alpha_composite(background.convert('RGBA'), txt_layer_distorted)
     
-    # Ruído final (pontos e círculos) para dificultar OCR
+    # Ruído frontal
     draw_final = ImageDraw.Draw(final_img)
     for _ in range(500):
         xy = (random.randint(0, width), random.randint(0, height))
         draw_final.point(xy, fill=(100, 100, 100))
         
-    # Salvar
     buffer = io.BytesIO()
     final_img.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode()
@@ -340,7 +338,6 @@ def servir_script():
 
 @app.route('/get-challenge', methods=['GET'])
 def get_challenge():
-    # Desafios expandidos
     tipos = ['num', 'char', 'mix', 'math']
     escolha = random.choice(tipos)
     
@@ -348,32 +345,24 @@ def get_challenge():
     resposta = ""
     
     if escolha == 'math':
-        # Subtipos de matemática: Soma, Subtração, Multiplicação
         op = random.choice(['+', '-', '*'])
-        
         if op == '+':
             a, b = random.randint(1, 15), random.randint(1, 15)
             texto_img = f"{a} + {b}"
             resposta = str(a + b)
         elif op == '-':
             a, b = random.randint(5, 20), random.randint(1, 10)
-            if a < b: a, b = b, a # Garante resultado positivo
+            if a < b: a, b = b, a 
             texto_img = f"{a} - {b}"
             resposta = str(a - b)
         elif op == '*':
-            a, b = random.randint(2, 9), random.randint(2, 5) # Números menores para não ficar difícil de cabeça
+            a, b = random.randint(2, 9), random.randint(2, 5)
             texto_img = f"{a} x {b}"
             resposta = str(a * b)
-            
     else:
-        # Texto normal
-        if escolha == 'num':
-            pool = "23456789"
-        elif escolha == 'char':
-            pool = "ACEFHJKLMNPRTXY"
-        else:
-            pool = "ACEFHKMNP234579"
-            
+        if escolha == 'num': pool = "23456789"
+        elif escolha == 'char': pool = "ACEFHJKLMNPRTXY"
+        else: pool = "ACEFHKMNP234579"
         texto_img = "".join(random.choices(pool, k=5))
         resposta = texto_img
 
@@ -389,7 +378,6 @@ def verify():
     data = request.json
     try:
         user_ans = data.get('answer', '').strip().upper()
-        # Remove espaços da resposta do usuário (útil para matemática)
         user_ans = user_ans.replace(" ", "")
         
         token_b64, sig = data.get('token', '').split('.')
@@ -397,7 +385,6 @@ def verify():
         
         if gerar_assinatura(dados) != sig: return jsonify({"success": False})
         
-        # Verifica timestamp (Ex: expira em 5 minutos)
         if time.time() - dados['ts'] > 300: return jsonify({"success": False})
         
         if user_ans == dados['ans'].upper(): return jsonify({"success": True})
