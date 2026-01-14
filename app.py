@@ -1,6 +1,6 @@
 from flask import Flask, Response, request, jsonify
 from flask_cors import CORS
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import io
 import time
 import hashlib
@@ -9,14 +9,15 @@ import random
 import json
 import base64
 import os
-import math # <--- Importante para a distorção (Seno/Cosseno)
+import math
+import platform
 
 app = Flask(__name__)
 CORS(app)
 
 SECRET_KEY = b"SuaChaveSuperSecreta_MudeIsso123"
 
-# --- FRONTEND (CSS Ajustado para a imagem maior) ---
+# --- FRONTEND (CSS Ajustado para imagem Gigante) ---
 JS_TEMPLATE = """
 (function() {
     const API_BASE = "__API_URL__";
@@ -45,7 +46,9 @@ JS_TEMPLATE = """
         
         .captcha-modal {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -20px);
-            background: white; width: 350px; /* Modal mais largo */
+            background: white; 
+            width: 450px; /* Aumentado para caber a imagem nova */
+            max-width: 90vw;
             border-radius: 12px;
             box-shadow: 0 20px 40px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.05);
             z-index: 10000; display: none; overflow: hidden;
@@ -62,7 +65,7 @@ JS_TEMPLATE = """
         .captcha-img {
             display: block; margin: 0 auto 15px auto; 
             border-radius: 8px; border: 1px solid #e5e7eb;
-            width: 100%; height: auto; /* Ajusta altura auto */
+            width: 100%; height: auto; 
             box-shadow: inset 0 0 10px rgba(0,0,0,0.05);
         }
         
@@ -114,9 +117,9 @@ JS_TEMPLATE = """
                         <div class="modal-body">
                             <div class="loader" id="c-loader"></div>
                             <img id="c-img" class="captcha-img" alt="" style="display:none;" />
-                            <p id="c-instrucao" style="font-size:13px; margin:0 0 10px 0; color:#4b5563;">...</p>
+                            <p id="c-instrucao" style="font-size:14px; margin:0 0 10px 0; color:#374151; font-weight:500;">...</p>
                             
-                            <input type="text" id="c-input" class="captcha-input" placeholder="DIGITE AQUI" autocomplete="off">
+                            <input type="text" id="c-input" class="captcha-input" placeholder="RESPOSTA" autocomplete="off">
                             <button id="c-btn" class="captcha-btn">VERIFICAR</button>
                             <span id="c-msg"></span>
                         </div>
@@ -153,8 +156,8 @@ JS_TEMPLATE = """
                     imgEl.src = "data:image/png;base64," + data.image;
                     
                     if(data.type === 'math') {
-                        instrucao.innerText = "Qual o resultado da soma?";
-                        inputField.placeholder = "?";
+                        instrucao.innerText = "Resolva o cálculo:";
+                        inputField.placeholder = "Resultado";
                     } else {
                         instrucao.innerText = "Digite os caracteres da imagem:";
                         inputField.placeholder = "TEXTO";
@@ -211,103 +214,118 @@ JS_TEMPLATE = """
 })();
 """
 
-# --- BACKEND (DISTORÇÃO E FONTE GIGANTE) ---
+# --- BACKEND (DISTORÇÃO, FONTE GIGANTE E NOVOS DESAFIOS) ---
 
 def gerar_assinatura(dados):
     msg = json.dumps(dados, sort_keys=True).encode()
     return hmac.new(SECRET_KEY, msg, hashlib.sha256).hexdigest()
 
+def get_best_font(size):
+    """Tenta carregar uma fonte TTF do sistema se font.ttf não existir"""
+    # 1. Tenta fonte local
+    try:
+        diretorio_atual = os.path.dirname(os.path.abspath(__file__))
+        caminho_fonte = os.path.join(diretorio_atual, 'font.ttf')
+        return ImageFont.truetype(caminho_fonte, size)
+    except:
+        pass
+    
+    # 2. Tenta fontes do sistema (Linux/Windows)
+    system_fonts = [
+        "arial.ttf", "segoeui.ttf", "calibri.ttf", # Windows
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", # Linux Comum
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "Arial.ttf" # MacOS as vezes
+    ]
+    
+    for f in system_fonts:
+        try:
+            return ImageFont.truetype(f, size)
+        except:
+            continue
+            
+    # 3. Fallback (vai ficar pequeno, mas funciona)
+    print("AVISO: Nenhuma fonte TTF encontrada. Usando padrão (pequena).")
+    return ImageFont.load_default()
+
 def aplicar_distorcao_onda(imagem):
-    """Aplica um efeito de onda senoidal na imagem"""
     width, height = imagem.size
     nova_imagem = Image.new("RGBA", (width, height), (0,0,0,0))
     
-    # Parâmetros da onda (frequencia e amplitude)
-    amplitude = random.randint(4, 7) # Altura da onda
-    frequencia = random.uniform(0.04, 0.07) # Quantas ondas aparecem
+    # Aumentei a amplitude pois a imagem agora é maior
+    amplitude = random.randint(5, 9) 
+    frequencia = random.uniform(0.03, 0.05)
     
-    # Processa coluna por coluna (pixel a pixel horizontal)
     for x in range(width):
-        # Calcula o deslocamento Y baseado no Seno de X
         offset_y = int(amplitude * math.sin(2 * math.pi * frequencia * x))
-        
-        # Copia a coluna da imagem original
         coluna = imagem.crop((x, 0, x + 1, height))
-        
-        # Cola na nova imagem com o deslocamento
-        # O 'max' evita colar fora da tela
         dest_y = max(0, offset_y)
         nova_imagem.paste(coluna, (x, dest_y))
         
     return nova_imagem
 
 def criar_imagem_distorcida(texto):
-    # 1. Canvas Muito Maior
-    width, height = 380, 130
-    # Fundo branco com leve cinza
-    background = Image.new('RGB', (width, height), color=(250, 250, 250))
+    # 1. Canvas GIGANTE para caber a fonte dobrada
+    width, height = 520, 180 
+    
+    # Fundo texturizado claro
+    background = Image.new('RGB', (width, height), color=(245, 245, 245))
     draw_bg = ImageDraw.Draw(background)
     
-    # 2. Ruído de Fundo (Linhas e Círculos)
-    for _ in range(30):
+    # Ruído de fundo mais grosso
+    for _ in range(40):
         x1, y1 = random.randint(0, width), random.randint(0, height)
         x2, y2 = random.randint(0, width), random.randint(0, height)
-        cor = (random.randint(200, 220), random.randint(200, 220), random.randint(200, 220))
-        draw_bg.line([(x1, y1), (x2, y2)], fill=cor, width=2)
+        cor = (random.randint(180, 220), random.randint(180, 220), random.randint(180, 220))
+        draw_bg.line([(x1, y1), (x2, y2)], fill=cor, width=3)
     
-    # 3. Preparar camada de texto transparente
+    # Camada de texto transparente
     txt_layer = Image.new('RGBA', (width, height), (255, 255, 255, 0))
-    draw_txt = ImageDraw.Draw(txt_layer)
     
-    # Carregar Fonte Gigante
-    try:
-        diretorio_atual = os.path.dirname(os.path.abspath(__file__))
-        caminho_fonte = os.path.join(diretorio_atual, 'font.ttf')
-        # FONTE TAMANHO 85 (DOBRO DO ANTERIOR)
-        font = ImageFont.truetype(caminho_fonte, 85)
-    except:
-        font = ImageFont.load_default() # Fallback (ficará pequeno se não tiver a fonte)
+    # Carregar Fonte Grande (Tamanho 110)
+    font = get_best_font(110)
 
-    # 4. Desenhar cada letra separada com rotação
-    # Calcula largura total aproximada para centralizar
-    total_w = len(texto) * 55 # Estimativa por letra
-    start_x = (width - total_w) / 2
+    # Cálculo centralização (ajustado para fonte 110)
+    # Estimativa média de largura por caractere ~60px a 70px
+    estimativa_largura = len(texto) * 75
+    start_x = (width - estimativa_largura) / 2
     
-    curr_x = start_x
+    curr_x = start_x if start_x > 0 else 10 # Margem de segurança
+    
     for char in texto:
-        # Cria uma imagem temp só para a letra (para poder girar)
-        char_img = Image.new('RGBA', (100, 100), (0,0,0,0))
+        # Imagem temporária para o caractere (maior para permitir rotação)
+        char_img = Image.new('RGBA', (150, 150), (0,0,0,0))
         char_draw = ImageDraw.Draw(char_img)
         
-        # Cor vibrante e escura
-        cor = (random.randint(20, 100), random.randint(20, 100), random.randint(20, 150))
+        # Cores aleatórias fortes
+        cor = (random.randint(0, 80), random.randint(0, 80), random.randint(0, 120))
         
-        # Desenha a letra no centro da imagem temp
-        char_draw.text((30, 10), char, font=font, fill=cor, stroke_width=2, stroke_fill=(200,200,200))
+        # Desenha caractere
+        char_draw.text((35, 10), char, font=font, fill=cor)
         
-        # Rotaciona a letra aleatoriamente
-        rotacao = random.randint(-25, 25)
+        # Rotação
+        rotacao = random.randint(-20, 20)
         char_rot = char_img.rotate(rotacao, expand=1, resample=Image.BICUBIC)
         
-        # Cola na camada de texto principal
-        offset_y = random.randint(10, 30)
+        # Offset Y aleatório para as letras "dançarem"
+        offset_y = random.randint(10, 40)
+        
         txt_layer.paste(char_rot, (int(curr_x), offset_y), char_rot)
+        curr_x += 75 # Espaçamento maior
         
-        curr_x += 50 # Espaçamento entre letras
-        
-    # 5. Aplicar Distorção de Onda (Wave Distortion)
+    # Aplica Onda
     txt_layer_distorted = aplicar_distorcao_onda(txt_layer)
     
-    # 6. Juntar Texto Distorcido com Fundo
+    # Compõe final
     final_img = Image.alpha_composite(background.convert('RGBA'), txt_layer_distorted)
     
-    # 7. Adicionar Ruído Frontal (Pontos para confundir OCR)
+    # Ruído final (pontos e círculos) para dificultar OCR
     draw_final = ImageDraw.Draw(final_img)
-    for _ in range(400):
+    for _ in range(500):
         xy = (random.randint(0, width), random.randint(0, height))
         draw_final.point(xy, fill=(100, 100, 100))
-
-    # Converter para Base64
+        
+    # Salvar
     buffer = io.BytesIO()
     final_img.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode()
@@ -322,46 +340,71 @@ def servir_script():
 
 @app.route('/get-challenge', methods=['GET'])
 def get_challenge():
-    # Tipos: Letras, Números ou Mistura
-    tipo = random.choice(['num', 'char', 'mix'])
+    # Desafios expandidos
+    tipos = ['num', 'char', 'mix', 'math']
+    escolha = random.choice(tipos)
     
-    if tipo == 'num':
-        texto = "".join(random.choices("23456789", k=5))
-    elif tipo == 'char':
-        texto = "".join(random.choices("ACEFHJKLMNPRTXY", k=5))
-    else:
-        texto = "".join(random.choices("ACEFHKMNP234579", k=5))
+    texto_img = ""
+    resposta = ""
+    
+    if escolha == 'math':
+        # Subtipos de matemática: Soma, Subtração, Multiplicação
+        op = random.choice(['+', '-', '*'])
         
-    # Para matemática, precisamos adaptar a lógica (simplifiquei aqui para focar na distorção visual de texto)
-    if random.random() < 0.3: # 30% de chance de ser math
-        a, b = random.randint(1, 8), random.randint(1, 8)
-        texto_img = f"{a}+{b}=?"
-        resposta = str(a + b)
-        tipo = 'math'
+        if op == '+':
+            a, b = random.randint(1, 15), random.randint(1, 15)
+            texto_img = f"{a} + {b}"
+            resposta = str(a + b)
+        elif op == '-':
+            a, b = random.randint(5, 20), random.randint(1, 10)
+            if a < b: a, b = b, a # Garante resultado positivo
+            texto_img = f"{a} - {b}"
+            resposta = str(a - b)
+        elif op == '*':
+            a, b = random.randint(2, 9), random.randint(2, 5) # Números menores para não ficar difícil de cabeça
+            texto_img = f"{a} x {b}"
+            resposta = str(a * b)
+            
     else:
-        texto_img = texto
-        resposta = texto
+        # Texto normal
+        if escolha == 'num':
+            pool = "23456789"
+        elif escolha == 'char':
+            pool = "ACEFHJKLMNPRTXY"
+        else:
+            pool = "ACEFHKMNP234579"
+            
+        texto_img = "".join(random.choices(pool, k=5))
+        resposta = texto_img
 
     imagem_b64 = criar_imagem_distorcida(texto_img)
     
     dados = { "ans": resposta, "ts": time.time(), "salt": random.randint(1, 9999) }
     token = f"{base64.urlsafe_b64encode(json.dumps(dados).encode()).decode()}.{gerar_assinatura(dados)}"
     
-    return jsonify({ "image": imagem_b64, "token": token, "type": tipo })
+    return jsonify({ "image": imagem_b64, "token": token, "type": escolha })
 
 @app.route('/verify', methods=['POST'])
 def verify():
     data = request.json
     try:
         user_ans = data.get('answer', '').strip().upper()
+        # Remove espaços da resposta do usuário (útil para matemática)
+        user_ans = user_ans.replace(" ", "")
+        
         token_b64, sig = data.get('token', '').split('.')
         dados = json.loads(base64.urlsafe_b64decode(token_b64).decode())
         
         if gerar_assinatura(dados) != sig: return jsonify({"success": False})
+        
+        # Verifica timestamp (Ex: expira em 5 minutos)
+        if time.time() - dados['ts'] > 300: return jsonify({"success": False})
+        
         if user_ans == dados['ans'].upper(): return jsonify({"success": True})
+        
         return jsonify({"success": False})
     except:
         return jsonify({"success": False})
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, port=5000)
