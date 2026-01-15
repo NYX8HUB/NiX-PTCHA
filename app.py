@@ -400,10 +400,11 @@ def validate_token():
     except Exception as e: return jsonify({"valid": False, "error": str(e)})
 
 
+
 @app.route("/v1/chat/completions", methods=["GET", "POST"])
 def chat_completions():
     try:
-        client = Client()  # ✅ agora SEMPRE existe
+        client = Client()
 
         # =====================
         # GET (navegador)
@@ -412,9 +413,7 @@ def chat_completions():
             prompt = request.args.get("prompt", "Olá!")
             model = request.args.get("model", "gpt-3.5-turbo")
 
-            messages = [
-                {"role": "user", "content": prompt}
-            ]
+            messages = [{"role": "user", "content": prompt}]
             temperature = 1
             stream = False
 
@@ -430,6 +429,16 @@ def chat_completions():
             stream = body.get("stream", False)
 
         # =====================
+        # PROVIDERS PERMITIDOS
+        # =====================
+        allowed_providers = [
+            Provider.FreeGpt,
+            Provider.You,
+            Provider.ChatBase,
+            Provider.GPTalk
+        ]
+
+        # =====================
         # STREAM
         # =====================
         if stream:
@@ -439,7 +448,8 @@ def chat_completions():
                         model=model,
                         messages=messages,
                         temperature=temperature,
-                        stream=True
+                        stream=True,
+                        providers=allowed_providers
                     ):
                         if not chunk or not chunk.choices:
                             continue
@@ -447,11 +457,11 @@ def chat_completions():
                         delta = getattr(chunk.choices[0].delta, "content", None)
                         if delta:
                             yield f"data: {json.dumps({
-                                'id': str(uuid.uuid4()),
-                                'object': 'chat.completion.chunk',
-                                'choices': [{
-                                    'delta': {'content': delta},
-                                    'index': 0
+                                "id": str(uuid.uuid4()),
+                                "object": "chat.completion.chunk",
+                                "choices": [{
+                                    "delta": {"content": delta},
+                                    "index": 0
                                 }]
                             })}\n\n"
                     yield "data: [DONE]\n\n"
@@ -467,7 +477,8 @@ def chat_completions():
         response = client.chat.completions.create(
             model=model,
             messages=messages,
-            temperature=temperature
+            temperature=temperature,
+            providers=allowed_providers
         )
 
         content = ""
