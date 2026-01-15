@@ -403,9 +403,11 @@ def validate_token():
 @app.route("/v1/chat/completions", methods=["GET", "POST"])
 def chat_completions():
     try:
-        # =========================
-        # GET (para navegador)
-        # =========================
+        client = Client()  # ✅ agora SEMPRE existe
+
+        # =====================
+        # GET (navegador)
+        # =====================
         if request.method == "GET":
             prompt = request.args.get("prompt", "Olá!")
             model = request.args.get("model", "gpt-3.5-turbo")
@@ -413,12 +415,12 @@ def chat_completions():
             messages = [
                 {"role": "user", "content": prompt}
             ]
-            stream = False
             temperature = 1
+            stream = False
 
-        # =========================
-        # POST (OpenAI compatível)
-        # =========================
+        # =====================
+        # POST (OpenAI)
+        # =====================
         else:
             body = request.get_json(force=True)
 
@@ -427,9 +429,9 @@ def chat_completions():
             temperature = body.get("temperature", 1)
             stream = body.get("stream", False)
 
-        # =========================
+        # =====================
         # STREAM
-        # =========================
+        # =====================
         if stream:
             def generate():
                 try:
@@ -459,9 +461,9 @@ def chat_completions():
 
             return Response(generate(), mimetype="text/event-stream")
 
-        # =========================
+        # =====================
         # NORMAL
-        # =========================
+        # =====================
         response = client.chat.completions.create(
             model=model,
             messages=messages,
@@ -493,7 +495,7 @@ def chat_completions():
         })
 
     except Exception:
-        print("🔥 ERRO:")
+        print("🔥 ERRO CRÍTICO:")
         print(traceback.format_exc())
         return jsonify({
             "error": {
