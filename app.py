@@ -1,7 +1,9 @@
 from flask import Flask, Response, request, jsonify, render_template
 from flask_cors import CORS
+from g4f.client import Client
 from PIL import Image, ImageDraw, ImageFont
 import io
+import uuid
 import time
 import hashlib
 import hmac
@@ -396,6 +398,64 @@ def validate_token():
         if not payload.get('valid'): return jsonify({"valid": False, "error": "Token inválido"})
         return jsonify({"valid": True, "ts": payload.get('ts_passed')})
     except Exception as e: return jsonify({"valid": False, "error": str(e)})
+
+
+@app.route("/v1/chat/completions", methods=["POST"])
+def chat_completions():
+    body = request.json
+
+    model = body.get("model", "gpt-4o-mini")
+    messages = body.get("messages", [])
+    temperature = body.get("temperature", 1)
+    stream = body.get("stream", False)
+
+    if stream:
+        def generate():
+            for chunk in client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                stream=True
+            ):
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield f"data: {json.dumps({
+                        'id': str(uuid.uuid4()),
+                        'object': 'chat.completion.chunk',
+                        'choices': [{
+                            'delta': {'content': delta},
+                            'index': 0
+                        }]
+                    })}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return Response(generate(), mimetype="text/event-stream")
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=temperature
+    )
+
+    return jsonify({
+        "id": str(uuid.uuid4()),
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": response.choices[0].message.content
+            },
+            "finish_reason": "stop"
+        }],
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
+        }
+    })
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
