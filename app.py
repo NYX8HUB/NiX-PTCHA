@@ -400,16 +400,36 @@ def validate_token():
     except Exception as e: return jsonify({"valid": False, "error": str(e)})
 
 
-@app.route("/v1/chat/completions", methods=["POST"])
+@app.route("/v1/chat/completions", methods=["GET", "POST"])
 def chat_completions():
     try:
-        body = request.get_json(force=True)
+        # =========================
+        # GET (para navegador)
+        # =========================
+        if request.method == "GET":
+            prompt = request.args.get("prompt", "Olá!")
+            model = request.args.get("model", "gpt-3.5-turbo")
 
-        model = body.get("model", "gpt-4o-mini")
-        messages = body.get("messages", [])
-        temperature = body.get("temperature", 1)
-        stream = body.get("stream", False)
+            messages = [
+                {"role": "user", "content": prompt}
+            ]
+            stream = False
+            temperature = 1
 
+        # =========================
+        # POST (OpenAI compatível)
+        # =========================
+        else:
+            body = request.get_json(force=True)
+
+            model = body.get("model", "gpt-3.5-turbo")
+            messages = body.get("messages", [])
+            temperature = body.get("temperature", 1)
+            stream = body.get("stream", False)
+
+        # =========================
+        # STREAM
+        # =========================
         if stream:
             def generate():
                 try:
@@ -433,21 +453,24 @@ def chat_completions():
                                 }]
                             })}\n\n"
                     yield "data: [DONE]\n\n"
-                except Exception as e:
+                except Exception:
                     print(traceback.format_exc())
                     yield "data: [DONE]\n\n"
 
             return Response(generate(), mimetype="text/event-stream")
 
+        # =========================
+        # NORMAL
+        # =========================
         response = client.chat.completions.create(
             model=model,
             messages=messages,
             temperature=temperature
         )
 
-        content = None
+        content = ""
         if response and response.choices:
-            content = response.choices[0].message.content
+            content = response.choices[0].message.content or ""
 
         return jsonify({
             "id": str(uuid.uuid4()),
@@ -458,7 +481,7 @@ def chat_completions():
                 "index": 0,
                 "message": {
                     "role": "assistant",
-                    "content": content or ""
+                    "content": content
                 },
                 "finish_reason": "stop"
             }],
@@ -470,7 +493,7 @@ def chat_completions():
         })
 
     except Exception:
-        print("🔥 ERRO CRÍTICO:")
+        print("🔥 ERRO:")
         print(traceback.format_exc())
         return jsonify({
             "error": {
