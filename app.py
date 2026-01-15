@@ -402,60 +402,82 @@ def validate_token():
 
 @app.route("/v1/chat/completions", methods=["POST"])
 def chat_completions():
-    body = request.json
+    try:
+        body = request.get_json(force=True)
 
-    model = body.get("model", "gpt-4o-mini")
-    messages = body.get("messages", [])
-    temperature = body.get("temperature", 1)
-    stream = body.get("stream", False)
+        model = body.get("model", "gpt-4o-mini")
+        messages = body.get("messages", [])
+        temperature = body.get("temperature", 1)
+        stream = body.get("stream", False)
 
-    if stream:
-        def generate():
-            for chunk in client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                stream=True
-            ):
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    yield f"data: {json.dumps({
-                        'id': str(uuid.uuid4()),
-                        'object': 'chat.completion.chunk',
-                        'choices': [{
-                            'delta': {'content': delta},
-                            'index': 0
-                        }]
-                    })}\n\n"
-            yield "data: [DONE]\n\n"
+        if stream:
+            def generate():
+                try:
+                    for chunk in client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        temperature=temperature,
+                        stream=True
+                    ):
+                        if not chunk or not chunk.choices:
+                            continue
 
-        return Response(generate(), mimetype="text/event-stream")
+                        delta = getattr(chunk.choices[0].delta, "content", None)
+                        if delta:
+                            yield f"data: {json.dumps({
+                                'id': str(uuid.uuid4()),
+                                'object': 'chat.completion.chunk',
+                                'choices': [{
+                                    'delta': {'content': delta},
+                                    'index': 0
+                                }]
+                            })}\n\n"
+                    yield "data: [DONE]\n\n"
+                except Exception as e:
+                    print(traceback.format_exc())
+                    yield "data: [DONE]\n\n"
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature
-    )
+            return Response(generate(), mimetype="text/event-stream")
 
-    return jsonify({
-        "id": str(uuid.uuid4()),
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": response.choices[0].message.content
-            },
-            "finish_reason": "stop"
-        }],
-        "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0
-        }
-    })
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature
+        )
+
+        content = None
+        if response and response.choices:
+            content = response.choices[0].message.content
+
+        return jsonify({
+            "id": str(uuid.uuid4()),
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": content or ""
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0
+            }
+        })
+
+    except Exception:
+        print("🔥 ERRO CRÍTICO:")
+        print(traceback.format_exc())
+        return jsonify({
+            "error": {
+                "message": "Internal server error",
+                "type": "server_error"
+            }
+        }), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(host="0.0.0.0", port=8000, debug=True)
